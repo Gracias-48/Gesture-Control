@@ -1,0 +1,44 @@
+{
+  "row": {
+    "run_id": "E9",
+    "exp_id": "E9",
+    "model": "tcn",
+    "ablation": "none",
+    "optimizer": "adam",
+    "lr": 0.001,
+    "batch_size": 64,
+    "epochs": 2,
+    "dropout": 0.2,
+    "weight_decay": 0.0,
+    "scheduler": "constant",
+    "T": 32,
+    "use_global": true,
+    "augmentation": true,
+    "num_classes": 8,
+    "params": 121672,
+    "n_seeds": 1,
+    "val_f1_mean": 0.15795454545454546,
+    "val_f1_std": 0.0,
+    "test_f1_mean": 0.10555555555555556,
+    "test_f1_std": 0.0,
+    "test_acc_mean": 0.16666666666666666,
+    "test_acc_std": 0.0,
+    "test_precision_mean": 0.08035714285714285,
+    "test_recall_mean": 0.16666666666666666,
+    "control_precision_mean": 0.09183673469387754,
+    "latency_ms_mean": 7.322733999990305,
+    "best_epoch_mean": 2.0,
+    "best_seed": 42,
+    "best_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E9\\seed42\\best.pt"
+  },
+  "seeds": [
+    {
+      "seed": 42,
+      "macro_f1": 0.10555555555555556,
+      "accuracy": 0.16666666666666666,
+      "val_macro_f1": 0.15795454545454546,
+      "best_epoch": 2,
+      "checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E9\\seed42\\best.pt"
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+# =============================================================================
+# Touchless Gesture Control HUD — Single configuration file
+# COMP6826001 Deep Learning Final Project
+# All modules (data, models, training, inference, app) read from this file.
+# =============================================================================
+
+project:
+  name: "Touchless Gesture Control HUD"
+  course: "COMP6826001 - Deep Learning"
+  seed: 42
+
+# -----------------------------------------------------------------------------
+# Paths (relative to repository root)
+# -----------------------------------------------------------------------------
+paths:
+  jester_frames_dir: data/raw_jester_subset/20bn-jester-v1   # <video_id>/00001.jpg ...
+  jester_train_csv: data/raw_jester_subset/jester-v1-train.csv       # "id;label"
+  jester_val_csv: data/raw_jester_subset/jester-v1-validation.csv    # "id;label"
+  interim_dir: data/interim_landmarks        # per-clip raw landmark .npy + index.csv
+  processed_dir: data/processed_landmarks    # T{T}/{train,val,test}.npz
+  scaler_stats: data/scaler_stats.npz        # z-score stats (train split, T=32)
+  runs_dir: runs                             # checkpoints + training histories
+  results_dir: results                       # metrics, confusion matrices, summaries
+  onnx_dir: models/onnx                      # exported .onnx + sidecar metadata
+  user_study_dir: results/user_study         # T1–T5 trials + SUS questionnaires
+
+# -----------------------------------------------------------------------------
+# 8-class subset of 20BN-Jester (PRD FR-02)
+# -----------------------------------------------------------------------------
+classes:
+  names:
+    - "Swipe Left"     # 0
+    - "Swipe Right"    # 1
+    - "Scroll Up"      # 2
+    - "Scroll Down"    # 3
+    - "Zoom In"        # 4
+    - "Zoom Out"       # 5
+    - "Stop"           # 6
+    - "Background"     # 7
+  jester_mapping:
+    "Swiping Left": 0
+    "Swiping Right": 1
+    "Sliding Two Fingers Up": 2
+    "Sliding Two Fingers Down": 3
+    "Zooming In With Full Hand": 4
+    "Zooming Out With Full Hand": 5
+    "Stop Sign": 6
+    "No gesture": 7
+    "Doing other things": 7
+  background_id: 7
+  background_sources: ["No gesture", "Doing other things"]
+  background_samples_per_source: 3000     # ~6.000 Background clips in total
+  flip_swap_pairs: [[0, 1]]               # horizontal flip: Swipe Left <-> Swipe Right
+  exclude_background: false               # ablation #4 sets this to true
+
+# -----------------------------------------------------------------------------
+# Offline MediaPipe extraction (TRD §2.2)
+# -----------------------------------------------------------------------------
+extraction:
+  target_height: 256              # bicubic upscale from native 100 px
+  static_image_mode: false
+  max_num_hands: 1
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+  model_complexity: 1
+  max_missing_ratio: 0.30         # discard clip if > 30 % frames have no hand
+  num_workers: 4                  # multiprocessing pool size
+
+split:
+  train: 0.70
+  val: 0.15
+  test: 0.15
+  random_state: 42
+
+# -----------------------------------------------------------------------------
+# Dual-stream features (TRD §2.3)
+# -----------------------------------------------------------------------------
+features:
+  T: 32                 # frames per window (~2.7 s @ 12 FPS)
+  fps: 12
+  num_joints: 21
+  eps: 1.0e-6
+  use_global: true      # ablation #1 sets false -> 126 seq feats / 6 graph channels
+  sequence_dim: 131     # 63 local + 63 local velocity + 3 wrist pos + 2 wrist planar vel
+  graph_channels: 10    # 3 local + 3 local vel + 3 wrist pos + 1 velocity magnitude
+
+# -----------------------------------------------------------------------------
+# Online augmentation — train split only (TRD §2.4)
+# -----------------------------------------------------------------------------
+augmentation:
+  enabled: true
+  rotation_deg: 15.0
+  scale_range: [0.8, 1.2]
+  jitter_std: 0.01
+  speed_range: [0.8, 1.2]
+  frame_dropout_range: [0.05, 0.10]
+  p_rotation: 0.5
+  p_scale: 0.5
+  p_jitter: 0.5
+  p_speed: 0.5
+  p_dropout: 0.3
+  p_flip: 0.5
+
+# -----------------------------------------------------------------------------
+# Model architectures (TRD §3.1)
+# -----------------------------------------------------------------------------
+models:
+  bilstm:
+    proj_dim: 128
+    hidden_size: 128
+    num_layers: 2
+    attn_dim: 128
+    fc_dim: 128
+  stgcn:
+    channels: [64, 64, 128, 128]
+    strides: [1, 1, 2, 1]
+    temporal_kernel: 9
+    edge_importance: true
+  tcn:
+    channels: 64
+    kernel_size: 3
+    dilations: [1, 2, 4, 8]
+    pooling: last          # "last" (causal last step) | "mean"
+
+# -----------------------------------------------------------------------------
+# Training protocol (TRD §3.2)
+# -----------------------------------------------------------------------------
+training:
+  label_smoothing: 0.1
+  grad_clip: 1.0
+  patience: 10
+  monitor: val_macro_f1
+  seeds: [42, 100, 2026]
+  num_workers: 0           # 0 is safest on Windows; raise on Linux
+  device: auto             # auto | cpu | cuda | mps
+
+# 12-scenario experiment matrix E1–E12
+experiments:
+  E1:  {model: bilstm, optimizer: adam,  lr: 1.0e-3, batch_size: 64,  epochs: 60,  dropout: 0.3, weight_decay: 0.0,    scheduler: {name: constant}}
+  E2:  {model: bilstm, optimizer: adamw, lr: 1.0e-3, batch_size: 64,  epochs: 60,  dropout: 0.3, weight_decay: 1.0e-2, scheduler: {name: cosine}}
+  E3:  {model: bilstm, optimizer: adamw, lr: 5.0e-4, batch_size: 128, epochs: 80,  dropout: 0.4, weight_decay: 1.0e-2, scheduler: {name: plateau, factor: 0.5, patience: 5}}
+  E4:  {model: bilstm, optimizer: adamw, lr: 1.0e-3, batch_size: 32,  epochs: 60,  dropout: 0.5, weight_decay: 5.0e-2, scheduler: {name: onecycle}}
+  E5:  {model: stgcn,  optimizer: adam,  lr: 1.0e-3, batch_size: 64,  epochs: 80,  dropout: 0.3, weight_decay: 0.0,    scheduler: {name: step, milestones: [40, 60], gamma: 0.1}}
+  E6:  {model: stgcn,  optimizer: adamw, lr: 1.0e-3, batch_size: 64,  epochs: 80,  dropout: 0.3, weight_decay: 1.0e-2, scheduler: {name: cosine}}
+  E7:  {model: stgcn,  optimizer: adamw, lr: 5.0e-4, batch_size: 128, epochs: 100, dropout: 0.4, weight_decay: 5.0e-2, scheduler: {name: cosine_warmup, warmup_epochs: 5}}
+  E8:  {model: stgcn,  optimizer: adamw, lr: 2.0e-3, batch_size: 32,  epochs: 80,  dropout: 0.5, weight_decay: 1.0e-2, scheduler: {name: onecycle}}
+  E9:  {model: tcn,    optimizer: adam,  lr: 1.0e-3, batch_size: 64,  epochs: 60,  dropout: 0.2, weight_decay: 0.0,    scheduler: {name: constant}}
+  E10: {model: tcn,    optimizer: adamw, lr: 1.0e-3, batch_size: 64,  epochs: 60,  dropout: 0.2, weight_decay: 1.0e-2, scheduler: {name: cosine}}
+  E11: {model: tcn,    optimizer: adamw, lr: 2.0e-3, batch_size: 128, epochs: 80,  dropout: 0.3, weight_decay: 5.0e-2, scheduler: {name: onecycle}}
+  E12: {model: tcn,    optimizer: adamw, lr: 5.0e-4, batch_size: 32,  epochs: 100, dropout: 0.4, weight_decay: 1.0e-2, scheduler: {name: plateau, factor: 0.5, patience: 5}}
+
+# Mandatory ablation studies (TRD §3.3) — dotted-key overrides on the best config
+ablations:
+  best_experiments: auto    # "auto" = pick highest mean val/test F1 per model from results; or a mapping {bilstm: E2, ...}
+  studies:
+    no_global:       {features.use_global: false}
+    no_augmentation: {augmentation.enabled: false}
+    window_16:       {features.T: 16}
+    window_48:       {features.T: 48}
+    no_background:   {classes.exclude_background: true}
+
+evaluation:
+  latency_warmup: 20
+  latency_runs: 200
+  control_classes: [0, 1, 2, 3, 4, 5, 6]
+
+# -----------------------------------------------------------------------------
+# ONNX export (TRD §4)
+# -----------------------------------------------------------------------------
+onnx:
+  opset: 17
+  max_size_mb: 5.0
+  atol: 1.0e-5
+  rtol: 1.0e-4
+
+# -----------------------------------------------------------------------------
+# Real-time inference engine (TRD §4, APP_FLOW §1)
+# -----------------------------------------------------------------------------
+inference:
+  camera_index: 0
+  capture_width: 640
+  capture_height: 480
+  capture_fps: 30
+  target_fps: 12             # timestamp resampling (dt >= 83.3 ms)
+  buffer_size: 32
+  stride: 4                  # run ONNX every 4 new buffered frames (~3 Hz)
+  default_model: tcn         # bilstm | stgcn | tcn
+  onnx_intra_op_threads: 2
+  mirror_display: true       # mirror only the displayed frame, never the model input
+  mediapipe:
+    model_complexity: 0      # 0 = lite (fast CPU), 1 = full
+    min_detection_confidence: 0.5
+    min_tracking_confidence: 0.5
+
+# -----------------------------------------------------------------------------
+# Anti-false-trigger post-processing gate (PRD FR-04, APP_FLOW §1 [4] & [6])
+# -----------------------------------------------------------------------------
+postprocessing:
+  confidence_threshold: 0.80
+  consecutive_windows: 3
+  cooldown_s: 0.9               # valid range 0.8 – 1.0 s
+  motion_threshold: 0.006       # mean joint speed (image-height units / frame)
+  motion_window: 32             # frames used by the motion gate
+  require_release: true         # same class cannot re-fire until prediction changes
+  hand_absent_reset_s: 1.0      # clear buffer if no hand for > 1 s
+  max_missing_ratio: 0.30       # skip inference if > 30 % of window is interpolated
+  triggered_display_s: 0.35     # how long the TRIGGERED badge stays before COOLDOWN
+  toast_display_s: 1.6
+
+# -----------------------------------------------------------------------------
+# OS action mapping (PyAutoGUI) — PRD FR-02 table
+# -----------------------------------------------------------------------------
+actions:
+  failsafe: true                # move mouse to a screen corner to abort PyAutoGUI
+  start_armed: false            # OS control starts DISABLED for safety
+  mapping:
+    0: {type: key,    keys: ["left"],       label: "Previous Slide", shortcut: "Left Arrow"}
+    1: {type: key,    keys: ["right"],      label: "Next Slide",     shortcut: "Right Arrow"}
+    2: {type: scroll, clicks: 5,            label: "Scroll Up",      shortcut: "scroll(+5)"}
+    3: {type: scroll, clicks: -5,           label: "Scroll Down",    shortcut: "scroll(-5)"}
+    4: {type: hotkey, keys: ["ctrl", "+"],  label: "Zoom In",        shortcut: "Ctrl + +"}
+    5: {type: hotkey, keys: ["ctrl", "-"],  label: "Zoom Out",       shortcut: "Ctrl + -"}
+    6: {type: key,    keys: ["space"],      label: "Play / Pause",   shortcut: "Space"}
+    7: {type: none,                         label: "Idle",           shortcut: "None"}
+
+# -----------------------------------------------------------------------------
+# User study protocol (APP_FLOW §4)
+# -----------------------------------------------------------------------------
+user_study:
+  trial_timeout_s: 5.0
+  idle_test_duration_s: 180
+  tasks:
+    T1: {title: "Navigasi Slide",    targets: [0, 1], repetitions: 10, instruction: "Lakukan Swipe Left / Swipe Right sesuai instruksi (10x)"}
+    T2: {title: "Gulir Dokumen",     targets: [2, 3], repetitions: 10, instruction: "Lakukan Scroll Up / Scroll Down sesuai instruksi (10x)"}
+    T3: {title: "Perbesar Citra",    targets: [4, 5], repetitions: 10, instruction: "Lakukan Zoom In / Zoom Out sesuai instruksi (10x)"}
+    T4: {title: "Kontrol Media",     targets: [6],    repetitions: 10, instruction: "Lakukan Stop untuk menjeda / memutar media (10x)"}
+    T5: {title: "Idle Stress Test",  targets: [],     repetitions: 0,  instruction: "Berbicara, mengetik, dan memegang gelas selama 3 menit tanpa memberi perintah"}

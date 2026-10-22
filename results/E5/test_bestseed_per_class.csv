@@ -1,0 +1,9 @@
+class_id,name,precision,recall,f1,support
+0,Swipe Left,0.0,0.0,0.0,2
+1,Swipe Right,0.5,0.5,0.5,2
+2,Scroll Up,1.0,1.0,1.0,3
+3,Scroll Down,1.0,1.0,1.0,2
+4,Zoom In,0.0,0.0,0.0,3
+5,Zoom Out,1.0,0.5,0.6666666666666666,2
+6,Stop,0.2,1.0,0.3333333333333333,2
+7,Background,0.0,0.0,0.0,2
