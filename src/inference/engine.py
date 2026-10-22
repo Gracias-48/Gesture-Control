@@ -32,7 +32,7 @@ from src.data.preprocessing import (
 from src.inference.camera import CameraStream, TimestampResampler
 from src.inference.controller import ActionResult, OSActionController
 from src.inference.gate import GateDecision, PostProcessGate, SystemState
-from src.inference.hand_tracker import HandTracker, draw_skeleton
+from src.inference.hand_tracker import HandTracker, draw_hud_hand_overlay, draw_skeleton
 from src.utils.config import load_config, resolve_path
 
 
@@ -288,19 +288,44 @@ class GestureInferenceEngine:
 
             # 2. Deteksi MediaPipe Hands
             lm_centered, lm_norm = self.hand_tracker.process(frame)
+            h, w = frame.shape[:2]
 
-            # Gambar overlay skeleton
-            accent = "coral"
             current_state = self.gate.phase(now) if len(self.raw_landmark_buffer) == self.buffer_size else SystemState.BUFFERING
+
+            # Hitung motion state (<< SWIPE LEFT, SWIPE RIGHT >>, STAY / HOLD) dan bounding box
+            motion_state, bbox, delta_x = self.hand_tracker.update_motion_state(
+                lm_norm, w, h, mirrored=self.mirror_display
+            )
+
+            # Tentukan warna aksen HUD
             if current_state == SystemState.TRIGGERED:
-                accent = "green"
+                accent = "coral"
             elif current_state == SystemState.COOLDOWN:
                 accent = "amber"
+            elif "SWIPE" in motion_state:
+                accent = "green"
+            else:
+                accent = "cyan"
 
-            display_frame = frame.copy()
-            draw_skeleton(display_frame, lm_norm, accent=accent)
-            if self.mirror_display:
-                display_frame = cv2.flip(display_frame, 1)
+            # Mirror frame terlebih dahulu jika mirror_display aktif
+            display_frame = cv2.flip(frame, 1) if self.mirror_display else frame.copy()
+
+            # Label kandidat gestur untuk badge HUD di atas tangan
+            cand_label = None
+            if self.telemetry.predicted_class is not None and self.telemetry.predicted_class != int(self.cfg["classes"]["background_id"]):
+                cname = self.class_names_list[self.telemetry.predicted_class]
+                cand_label = f"{cname} ({self.telemetry.predicted_confidence * 100:.0f}%)"
+
+            # Render skeletal bones, corner brackets, dan floating motion badge
+            draw_hud_hand_overlay(
+                display_frame,
+                lm_norm,
+                motion_state=motion_state,
+                bbox=bbox,
+                accent=accent,
+                mirrored=self.mirror_display,
+                candidate_label=cand_label,
+            )
 
             # 3. Pengelolaan Buffer Landmark
             if lm_centered is not None:
