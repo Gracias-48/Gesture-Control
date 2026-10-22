@@ -22,17 +22,17 @@
   "scaler": "tcn_scaler.npz",
   "params": 121672,
   "size_mb": 0.486,
-  "parity_max_abs_diff": 4.470348358154297e-08,
+  "parity_max_abs_diff": 8.940696716308594e-08,
   "onnx_latency": {
-    "mean_ms": 0.39021449994834256,
-    "std_ms": 0.44951482734536585,
-    "p50_ms": 0.26524999884713907,
-    "p95_ms": 0.7312299991099277,
-    "max_ms": 5.476800000906223
+    "mean_ms": 0.7967610000025616,
+    "std_ms": 1.4811763808510956,
+    "p50_ms": 0.5340500000556858,
+    "p95_ms": 1.2605849998408298,
+    "max_ms": 19.953700000087338
   },
   "opset": 17,
-  "source_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E9\\seed42\\best.pt",
-  "exp_id": "E9",
-  "val_macro_f1": 0.15795454545454546,
+  "source_checkpoint": "runs/E10/seed42/best.pt",
+  "exp_id": "E10",
+  "val_macro_f1": 0.7854599104599105,
   "dummy": false
 }

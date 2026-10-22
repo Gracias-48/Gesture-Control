@@ -55,6 +55,7 @@ class TelemetryData:
     class_names: List[str] = field(default_factory=list)
     predicted_class: Optional[int] = None
     predicted_confidence: float = 0.0
+    gate_reason: str = "STANDBY"
     last_action: Optional[ActionResult] = None
     os_armed: bool = False
     action_history: List[Dict[str, Any]] = field(default_factory=list)
@@ -346,7 +347,9 @@ class GestureInferenceEngine:
                     motion_speed = mean_joint_speed(filled_seq)
                     motion_ok = motion_speed >= self.gate.cfg.motion_threshold
 
-                    if motion_ok and self.onnx_session is not None and self.pipeline is not None:
+                    # SELALU jalankan ONNX jika session dan pipeline tersedia,
+                    # agar raw candidate class dan confidence selalu terdeteksi live
+                    if self.onnx_session is not None and self.pipeline is not None:
                         t_infer_start = time.perf_counter()
                         # Normalisasi dua-aliran (Dual-Stream)
                         x_feat = self.pipeline(filled_seq)
@@ -358,15 +361,9 @@ class GestureInferenceEngine:
                         lat_ms = (time.perf_counter() - t_infer_start) * 1e3
                         pred_idx = int(np.argmax(probs))
                         pred_conf = float(probs[pred_idx])
-                    else:
-                        # Gerakan tangan diam / di bawah motion threshold
-                        probs = np.zeros(8, dtype=np.float32)
-                        probs[int(self.cfg["classes"]["background_id"])] = 1.0
-                        pred_idx = int(self.cfg["classes"]["background_id"])
-                        pred_conf = 1.0
 
                     # Evaluasi Post-processing Decision Gate
-                    decision: GateDecision = self.gate.update(probs if motion_ok else None, motion_ok, now)
+                    decision: GateDecision = self.gate.update(probs, motion_ok, now)
 
                     if decision.fire and decision.class_id is not None:
                         # Eksekusi aksi OS via PyAutoGUI
@@ -392,6 +389,11 @@ class GestureInferenceEngine:
                                 self.telemetry.action_history.pop()
 
             # 5. Perbarui Snapshot Telemetri Thread-Safe
+            gate_reason_str = (
+                self.gate.last_decision.reason
+                if self.gate.last_decision
+                else ("STANDBY" if buf_len == 0 else ("BUFFERING" if buf_len < self.buffer_size else "MONITORING"))
+            )
             with self._lock:
                 self.last_processed_frame = display_frame
                 self.telemetry.state = current_state
@@ -403,6 +405,7 @@ class GestureInferenceEngine:
                 self.telemetry.probabilities = probs
                 self.telemetry.predicted_class = pred_idx
                 self.telemetry.predicted_confidence = pred_conf
+                self.telemetry.gate_reason = gate_reason_str
                 self.telemetry.cooldown_remaining = self.gate.cooldown_remaining(now)
                 self.telemetry.consistency_count = (
                     self.gate.last_decision.consistency if self.gate.last_decision else 0
@@ -432,6 +435,7 @@ class GestureInferenceEngine:
                 class_names=list(self.telemetry.class_names),
                 predicted_class=self.telemetry.predicted_class,
                 predicted_confidence=self.telemetry.predicted_confidence,
+                gate_reason=self.telemetry.gate_reason,
                 last_action=self.telemetry.last_action,
                 os_armed=self.telemetry.os_armed,
                 action_history=list(self.telemetry.action_history),

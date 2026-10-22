@@ -287,6 +287,83 @@ html, body, [data-testid="stAppViewContainer"] {
     align-items: center;
     gap: 6px;
 }
+/* --- Live Diagnostic Bar --- */
+.diagnostic-card {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    background-color: var(--ray-surface);
+    border: 1px solid var(--ray-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-top: 10px;
+    margin-bottom: 12px;
+}
+.diag-col {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.diag-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ray-text-muted);
+}
+.diag-value {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    font-family: 'JetBrains Mono', monospace;
+}
+.diag-badge-ok {
+    background-color: rgba(48, 209, 88, 0.15);
+    color: #30d158;
+    border: 1px solid rgba(48, 209, 88, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.diag-badge-blocked {
+    background-color: rgba(255, 99, 99, 0.15);
+    color: #ff6363;
+    border: 1px solid rgba(255, 99, 99, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.diag-badge-triggered {
+    background-color: #ff6363;
+    color: #ffffff;
+    border: 1px solid #ff8888;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    box-shadow: 0 0 10px rgba(255, 99, 99, 0.6);
+}
+.diag-badge-monitoring {
+    background-color: rgba(86, 194, 255, 0.15);
+    color: #56c2ff;
+    border: 1px solid rgba(86, 194, 255, 0.4);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.diag-badge-standby {
+    background-color: rgba(106, 107, 108, 0.15);
+    color: #9c9c9d;
+    border: 1px solid #2e3032;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
 </style>
 """
 
@@ -369,6 +446,59 @@ def render_telemetry_cards(fps: float, latency_ms: float, buffer_fill: int, buff
             <div class="telemetry-label">Cooldown / Gate</div>
             <div class="telemetry-value" style="color: {cd_color};">{cd_str}</div>
             <div class="telemetry-sub">OS Control: {armed_str}</div>
+        </div>
+    </div>
+    """
+
+
+def render_diagnostic_bar(
+    candidate_name: str,
+    candidate_conf: float,
+    motion_passed: bool,
+    motion_speed: float,
+    motion_threshold: float,
+    gate_reason: str,
+    consistency_count: int,
+    consistency_target: int,
+) -> str:
+    """Render status diagnostik real-time tepat di bawah viewport webcam."""
+    # Motion Gate Pill
+    if motion_passed:
+        motion_badge = f'<span class="diag-badge-ok">PASSED ({motion_speed:.4f})</span>'
+    else:
+        motion_badge = f'<span class="diag-badge-blocked">BLOCKED ({motion_speed:.4f} &lt; {motion_threshold:.4f})</span>'
+
+    # Gate Reason Pill
+    reason_clean = str(gate_reason)
+    if "TRIGGERED" in reason_clean:
+        reason_badge = f'<span class="diag-badge-triggered">⚡ {reason_clean}</span>'
+    elif "BLOCKED" in reason_clean:
+        reason_badge = f'<span class="diag-badge-blocked">{reason_clean}</span>'
+    elif "MONITORING" in reason_clean:
+        reason_badge = f'<span class="diag-badge-monitoring">{reason_clean}</span>'
+    else:
+        reason_badge = f'<span class="diag-badge-standby">{reason_clean}</span>'
+
+    # Confidence bar color
+    conf_pct = candidate_conf * 100.0
+    conf_color = "#30d158" if conf_pct >= 50.0 else "#ffd60a" if conf_pct >= 30.0 else "#9c9c9d"
+
+    return f"""
+    <div class="diagnostic-card">
+        <div class="diag-col">
+            <div class="diag-label">Raw Candidate & Confidence</div>
+            <div class="diag-value">
+                <span style="color: #f9f9f9; font-weight: 600;">{candidate_name}</span>
+                <span class="mono-text" style="color: {conf_color}; font-size: 0.95rem; margin-left: 6px;">{conf_pct:.1f}%</span>
+            </div>
+        </div>
+        <div class="diag-col">
+            <div class="diag-label">Motion Gate Status</div>
+            <div class="diag-value">{motion_badge}</div>
+        </div>
+        <div class="diag-col">
+            <div class="diag-label">Gate Decision & Vote</div>
+            <div class="diag-value">{reason_badge}</div>
         </div>
     </div>
     """
