@@ -13,7 +13,8 @@
 
 **A production-grade, CPU-optimized desktop utility and telemetry HUD that enables touchless computer control via natural hand gestures using standard webcam hardware.**
 
-[Key Features](#key-features) | [System Architecture](#system-architecture) | [Gesture Mapping](#gesture-control-mapping) | [Model Benchmarks](#deep-learning-architectures-and-benchmarks) | [Installation & Quickstart](#installation-and-quickstart) | [Authors](#authors-and-academic-attribution)
+[Key Features](#key-features) | [System Architecture](#system-architecture) | [Gesture Mapping](#gesture-control-mapping) | [Model Benchmarks](#deep-learning-architectures-and-benchmarks) | [Installation & Quickstart](#installation-and-quickstart) | [License](#license-and-acknowledgements)
+
 
 ---
 
@@ -226,16 +227,6 @@ python -m src.training.export_onnx --checkpoint runs/E2/seed42/best.pt
 # Run automated unit tests:
 pytest -v
 ```
-
----
-
-## Authors and Academic Attribution
-
-This project is submitted as the Final Project for **COMP6826001 - Deep Learning**, Computer Science Department, Bina Nusantara University.
-
-* **Gracias Kumara Winata** (NIM: 2802459683)
-* **Vincensius Kevin Mulyono** (NIM: 2802476424)
-* **Malvin Raditya Nugraha** (NIM: 2802489206)
 
 ---
 
