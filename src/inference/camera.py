@@ -52,18 +52,29 @@ class CameraStream:
     def start(self) -> "CameraStream":
         import cv2
 
-        backend = cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_ANY
-        cap = cv2.VideoCapture(self.index, backend)
-        if not cap.isOpened():
-            cap = cv2.VideoCapture(self.index)
-        if not cap.isOpened():
-            raise RuntimeError(f"Cannot open camera index {self.index}")
+        cap = None
+        for test_idx in (self.index, 0, 1):
+            backend = cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_ANY
+            c = cv2.VideoCapture(test_idx, backend)
+            if not c.isOpened():
+                c = cv2.VideoCapture(test_idx)
+            if c.isOpened():
+                cap = c
+                self.index = test_idx
+                break
+
+        if cap is None or not cap.isOpened():
+            self.error = f"Cannot open camera device (tried index {self.index}, 0, 1)"
+            print(f"[CameraStream] {self.error}")
+            return self
+
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         cap.set(cv2.CAP_PROP_FPS, self.fps)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         self._cap = cap
         self._running = True
+        self.error = None
         self._thread = threading.Thread(target=self._loop, name="camera-producer", daemon=True)
         self._thread.start()
         return self
@@ -88,7 +99,7 @@ class CameraStream:
     def read(self) -> tuple[int, Optional[np.ndarray], float]:
         """Return ``(sequence_id, frame_bgr, timestamp)`` of the most recent frame."""
         with self._lock:
-            return self._seq, self._frame, self._ts
+            return self._seq, self._frame.copy() if self._frame is not None else None, self._ts
 
     def stop(self) -> None:
         self._running = False

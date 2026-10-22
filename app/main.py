@@ -1,4 +1,4 @@
-"""Streamlit Real-Time Gesture Control HUD & Evaluation Dashboard (Raycast Theme).
+"""Streamlit Real-Time Touchless Gesture Control HUD & Evaluation Dashboard.
 
 COMP6826001 - Deep Learning Final Project
 """
@@ -27,7 +27,8 @@ import app.styles
 importlib.reload(app.styles)
 
 from app.styles import (
-    RAYCAST_CSS,
+    HUD_CSS,
+    render_action_log,
     render_confidence_bars,
     render_diagnostic_bar,
     render_state_badge,
@@ -44,8 +45,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Injeksi CSS Raycast Design System
-st.markdown(RAYCAST_CSS, unsafe_allow_html=True)
+# Injeksi CSS Dark Cyber HUD
+st.markdown(HUD_CSS, unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -61,8 +62,8 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
     st.sidebar.markdown(
         """
         <div style="padding: 10px 0; border-bottom: 1px solid #242728; margin-bottom: 16px;">
-            <div style="font-size: 1.1rem; font-weight: 700; color: #f9f9f9;">RAYCAST HUD</div>
-            <div style="font-size: 0.75rem; color: #9c9c9d;">Touchless Gesture Control • COMP6826001</div>
+            <div style="font-size: 1.1rem; font-weight: 700; color: #f9f9f9;">TOUCHLESS GESTURE HUD</div>
+            <div style="font-size: 0.75rem; color: #9c9c9d;">Aero Motion Control • COMP6826001</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -90,10 +91,10 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
 
     st.sidebar.markdown("---")
     st.sidebar.markdown('<div class="hud-section-title">Anti-False-Trigger Gate</div>', unsafe_allow_html=True)
-    
+
     thresh = st.sidebar.slider(
         "Confidence Threshold (min probability)",
-        min_value=0.50,
+        min_value=0.40,
         max_value=0.98,
         value=float(engine.telemetry.confidence_threshold),
         step=0.02,
@@ -115,7 +116,7 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
 
     st.sidebar.markdown("---")
     st.sidebar.markdown('<div class="hud-section-title">OS Action Injection (PyAutoGUI)</div>', unsafe_allow_html=True)
-    
+
     arm_toggle = st.sidebar.checkbox(
         "Master Arm OS Control",
         value=engine.telemetry.os_armed,
@@ -141,8 +142,8 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
     with col_hdr1:
         st.markdown(
             f"""
-            <div class="ray-header">
-                <div class="ray-title">
+            <div class="hud-header">
+                <div class="hud-title">
                     <span class="dot"></span>
                     <span>TOUCHLESS GESTURE HUD</span>
                     <span style="font-size: 0.75rem; color: #9c9c9d; margin-left: 8px;">[Arch: {engine.telemetry.active_model}]</span>
@@ -156,17 +157,18 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         )
     with col_hdr2:
         armed_status = "ARMED (⌘)" if engine.telemetry.os_armed else "DISARMED"
+        badge_style = "badge-triggered" if engine.telemetry.os_armed else "badge-standby"
         st.markdown(
             f"""
-            <div class="ray-header" style="justify-content: flex-end; gap: 12px;">
+            <div class="hud-header" style="justify-content: flex-end; gap: 12px;">
                 <span style="font-size: 0.8rem; color: #9c9c9d;">OS Injection:</span>
-                <span class="ray-badge {'badge-triggered' if engine.telemetry.os_armed else 'badge-standby'}">{armed_status}</span>
+                <span class="hud-badge {badge_style}">{armed_status}</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    # Main Grid (Left 65% Viewport, Right 35% Telemetry)
+    # Main Grid (Left 62% Viewport, Right 38% Telemetry)
     col_view, col_tele = st.columns([0.62, 0.38])
 
     with col_view:
@@ -188,14 +190,14 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
                 engine.raw_landmark_buffer.clear()
                 st.rerun()
 
-        # Frame container
+        # Viewport Video Frame Placeholder
         frame_placeholder = st.empty()
         toast_placeholder = st.empty()
 
-        # Mode Diagnostik Live di bawah webcam
+        # Live Diagnostic Bar tepat di bawah viewport kamera
         diagnostic_placeholder = st.empty()
 
-        # Riwayat Log Aksi
+        # Riwayat Log Aksi OS
         st.markdown('<div class="hud-section-title" style="margin-top: 14px;">Recent Command Triggers</div>', unsafe_allow_html=True)
         log_placeholder = st.empty()
 
@@ -205,25 +207,28 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
 
     # Loop refresh telemetri & frame
     if engine.running:
-        for _ in range(30):  # Stream 30 update cycles per render
-            frame, tele = engine.get_latest_frame_and_telemetry()
-            if frame is not None and getattr(frame, "size", 0) > 0:
-                ret, jpg_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                if ret:
-                    frame_placeholder.image(jpg_buf.tobytes(), use_container_width=True)
-                else:
-                    frame_placeholder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), use_container_width=True)
+        for _ in range(30):  # Stream 30 update cycles per render (~1.8 detik per batch sebelum rerun)
+            frame_bgr, tele = engine.get_latest_frame_and_telemetry()
+
+            # Render frame RGB ke viewport tanpa broken-image glitch
+            if frame_bgr is not None and isinstance(frame_bgr, np.ndarray) and frame_bgr.size > 0:
+                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
             else:
                 frame_placeholder.markdown(
                     """
-                    <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 360px; display: flex; align-items: center; justify-content: center; color: #6a6b6c;">
-                        Menunggu frame kamera... Pastikan webcam terhubung dan izin kamera aktif.
+                    <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 360px; display: flex; align-items: center; justify-content: center; color: #9c9c9d; text-align: center; padding: 20px;">
+                        <div>
+                            <div style="font-size: 1.5rem; margin-bottom: 8px;">📷</div>
+                            <div style="font-weight: 600;">Menunggu frame kamera...</div>
+                            <div style="font-size: 0.8rem; color: #6a6b6c; margin-top: 4px;">Pastikan webcam terhubung dan tidak dipakai aplikasi lain.</div>
+                        </div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
 
-            # Toast Pill
+            # Floating Toast Pill saat gestur dieksekusi
             if tele.toast_message:
                 toast_placeholder.markdown(
                     f"""
@@ -242,7 +247,7 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
 
             # Mode Diagnostik Live Real-Time
             cand_idx = tele.predicted_class if tele.predicted_class is not None else int(cfg["classes"]["background_id"])
-            cand_name = tele.class_names[cand_idx] if cand_idx < len(tele.class_names) else "None"
+            cand_name = tele.class_names[cand_idx] if cand_idx < len(tele.class_names) else "Unknown"
             diagnostic_placeholder.markdown(
                 render_diagnostic_bar(
                     candidate_name=cand_name,
@@ -257,7 +262,7 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
                 unsafe_allow_html=True,
             )
 
-            # Telemetry Cards & Confidence Bars
+            # Telemetry Cards & 8-Class Softmax Confidence Bars
             telemetry_placeholder.markdown(
                 render_telemetry_cards(
                     fps=tele.fps,
@@ -279,37 +284,20 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
                 unsafe_allow_html=True,
             )
 
-            # Action Log
-            if tele.action_history:
-                log_html = ['<div class="action-log-card">']
-                for item in tele.action_history[:5]:
-                    log_html.append(f"""
-                    <div class="action-log-item">
-                        <span class="action-log-ts">{item['timestamp']}</span>
-                        <span class="action-log-gesture">{item['gesture']}</span>
-                        <span class="action-log-key">{item['action']} ({item['shortcut']})</span>
-                        <span style="color: #56c2ff;">{item['confidence']}</span>
-                        <span style="color: #6a6b6c;">{item['latency_ms']}</span>
-                    </div>
-                    """)
-                log_html.append('</div>')
-                log_placeholder.markdown("".join(log_html), unsafe_allow_html=True)
-            else:
-                log_placeholder.markdown(
-                    '<div class="action-log-card" style="color: #6a6b6c; font-size: 0.8rem; text-align: center; padding: 20px;">Belum ada aksi yang dipicu</div>',
-                    unsafe_allow_html=True,
-                )
+            # Riwayat Aksi OS (Unindented HTML)
+            log_placeholder.markdown(render_action_log(tele.action_history), unsafe_allow_html=True)
 
-            time.sleep(0.06)
+            time.sleep(0.05)
+
         st.rerun()
     else:
-        # Tampilan static saat camera OFF
+        # Tampilan saat camera OFF / STANDBY
         frame_placeholder.markdown(
             """
             <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 380px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #9c9c9d; gap: 10px;">
-                <div style="font-size: 1.5rem; color: #ff6363;">⚡</div>
-                <div style="font-weight: 600; color: #f9f9f9;">Camera Inactive</div>
-                <div style="font-size: 0.8rem; color: #6a6b6c;">Klik "Start Camera Stream" di atas untuk memulai inferensi real-time.</div>
+                <div style="font-size: 1.6rem; color: #ff6363;">⚡</div>
+                <div style="font-weight: 600; color: #f9f9f9; font-size: 1.05rem;">Camera Inactive</div>
+                <div style="font-size: 0.8rem; color: #6a6b6c;">Klik "▶ Start Camera Stream" di atas untuk memulai inferensi real-time.</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -336,6 +324,7 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
             render_confidence_bars(tele.class_names, np.zeros(len(tele.class_names)), tele.confidence_threshold),
             unsafe_allow_html=True,
         )
+        log_placeholder.markdown(render_action_log(tele.action_history), unsafe_allow_html=True)
 
 
 def render_experiments_tab(cfg: Dict[str, Any]):
@@ -347,7 +336,7 @@ def render_experiments_tab(cfg: Dict[str, Any]):
 
     if summary_path.exists():
         df_summary = pd.read_csv(summary_path)
-        
+
         # Ringkasan KPI Model
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -396,7 +385,7 @@ def render_experiments_tab(cfg: Dict[str, Any]):
     else:
         st.info(
             "Belum ada data eksekusi eksperimen di `results/experiments_summary.csv`. "
-            "Jalankan skrip `python -m src.training.train --all` atau `--exp E1 E5 E9` untuk melatih dan mengevaluasi model."
+            "Jalankan skrip `python -m src.training.train --all` atau `--exp E10 E2` untuk melatih dan mengevaluasi model."
         )
 
         # Tampilkan matriks skenario dari config
@@ -420,7 +409,7 @@ def render_experiments_tab(cfg: Dict[str, Any]):
 def render_user_study_tab(cfg: Dict[str, Any]):
     """Tab 3: Protokol Uji Pengguna (T1-T5) dan Kalkulator Kuesioner SUS Digital (0-100)."""
     st.markdown('<div class="hud-section-title">Within-Subject User Study Protocol (n = 8–10)</div>', unsafe_allow_html=True)
-    
+
     st.markdown(
         """
         Pengujian pengguna dilakukan menggunakan protokol *within-subject* untuk mengevaluasi akurasi gestur alami, 
@@ -465,9 +454,6 @@ def render_user_study_tab(cfg: Dict[str, Any]):
             scores.append(val)
 
         # Hitung skor SUS resmi (0 - 100)
-        # Untuk pertanyaan ganjil (1,3,5,7,9): skor = nilai - 1
-        # Untuk pertanyaan genap (2,4,6,8,10): skor = 5 - nilai
-        # Total sum dikalikan 2.5
         odd_sum = sum(scores[i] - 1 for i in range(0, 10, 2))
         even_sum = sum(5 - scores[i] for i in range(1, 10, 2))
         final_sus = (odd_sum + even_sum) * 2.5
@@ -493,10 +479,10 @@ def render_user_study_tab(cfg: Dict[str, Any]):
             study_dir = resolve_path(cfg, "user_study_dir")
             study_dir.mkdir(parents=True, exist_ok=True)
             csv_file = study_dir / "sus_responses.csv"
-            
+
             row = [participant_id, hand_dom, time.strftime("%Y-%m-%d %H:%M:%S"), final_sus] + scores
             headers = ["participant_id", "hand_dominant", "timestamp", "final_sus"] + [f"q{i+1}" for i in range(10)]
-            
+
             write_header = not csv_file.exists()
             with open(csv_file, "a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
