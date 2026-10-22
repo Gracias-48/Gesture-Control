@@ -12,7 +12,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -30,6 +29,7 @@ from app.styles import (
     HUD_CSS,
     render_action_log,
     render_confidence_bars,
+    render_camera_frame,
     render_diagnostic_bar,
     render_state_badge,
     render_telemetry_cards,
@@ -210,18 +210,23 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         for _ in range(30):  # Stream 30 update cycles per render (~1.8 detik per batch sebelum rerun)
             frame_bgr, tele = engine.get_latest_frame_and_telemetry()
 
-            # Render frame RGB ke viewport tanpa broken-image glitch
+            # Render frame sebagai JPEG base64 inline (st.image + st.rerun() memicu broken-image)
+            frame_html = ""
             if frame_bgr is not None and isinstance(frame_bgr, np.ndarray) and frame_bgr.size > 0:
-                frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                frame_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
+                frame_html = render_camera_frame(frame_bgr)
+
+            if frame_html:
+                frame_placeholder.markdown(frame_html, unsafe_allow_html=True)
             else:
+                cam_err = engine.camera.error if engine.camera is not None else None
+                hint = cam_err or "Pastikan webcam terhubung dan tidak dipakai aplikasi lain."
                 frame_placeholder.markdown(
-                    """
+                    f"""
                     <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 360px; display: flex; align-items: center; justify-content: center; color: #9c9c9d; text-align: center; padding: 20px;">
                         <div>
                             <div style="font-size: 1.5rem; margin-bottom: 8px;">📷</div>
                             <div style="font-weight: 600;">Menunggu frame kamera...</div>
-                            <div style="font-size: 0.8rem; color: #6a6b6c; margin-top: 4px;">Pastikan webcam terhubung dan tidak dipakai aplikasi lain.</div>
+                            <div style="font-size: 0.8rem; color: #6a6b6c; margin-top: 4px;">{hint}</div>
                         </div>
                     </div>
                     """,

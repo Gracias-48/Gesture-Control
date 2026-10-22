@@ -380,6 +380,30 @@ def clean_html(raw_html: str) -> str:
     return "".join(lines)
 
 
+def render_camera_frame(frame_bgr, quality: int = 80) -> str:
+    """Encode a BGR frame as an inline base64 JPEG ``<img>`` tag.
+
+    ``st.image(ndarray)`` registers each frame as a temporary media file; inside a fast
+    update loop followed by ``st.rerun()`` the browser asks for files Streamlit has
+    already evicted, which shows up as a broken image with alt text "0". A data URI
+    carries the pixels inside the HTML itself, so there is nothing to evict.
+
+    Returns an empty string if the frame cannot be encoded.
+    """
+    import base64
+
+    import cv2
+
+    ok, buf = cv2.imencode(".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+    if not ok:
+        return ""
+    b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+    return (
+        '<img alt="Live camera feed" src="data:image/jpeg;base64,' + b64 + '" '
+        'style="width:100%;display:block;border-radius:8px;border:1px solid #242728;"/>'
+    )
+
+
 def render_state_badge(state: str) -> str:
     """Render HTML badge warna-warni sesuai state machine."""
     st = str(state).replace("SystemState.", "").upper()
