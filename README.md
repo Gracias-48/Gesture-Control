@@ -1,7 +1,7 @@
 <div align="center">
 
-# ⚡ Touchless Gesture Control HUD
-### *Continuous Spatio-Temporal Deep Learning for Real-Time Touchless Human-Computer Interaction*
+# Touchless Gesture Control HUD
+### Continuous Spatio-Temporal Deep Learning for Real-Time Touchless Human-Computer Interaction
 
 [![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x%20CPU%2FCUDA-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
@@ -13,49 +13,49 @@
 
 **A production-grade, CPU-optimized desktop utility and telemetry HUD that enables touchless computer control via natural hand gestures using standard webcam hardware.**
 
-[Key Features](#-key-features) • [System Architecture](#-system-architecture) • [Gesture Mapping](#-gesture-control-mapping) • [Model Benchmarks](#-deep-learning-architectures--benchmarks) • [Installation & Usage](#-installation--quickstart) • [Authors](#-authors--academic-attribution)
+[Key Features](#key-features) | [System Architecture](#system-architecture) | [Gesture Mapping](#gesture-control-mapping) | [Model Benchmarks](#deep-learning-architectures-and-benchmarks) | [Installation & Quickstart](#installation-and-quickstart) | [Authors](#authors-and-academic-attribution)
 
 ---
 
 </div>
 
-## 📌 Motivation & Executive Summary
+## Motivation and Overview
 
 Physical touchscreens in hospital operating theaters, sterile laboratories, ATM kiosks, and elevator panels present significant risks of cross-contamination and surface degradation. **Touchless Gesture Control HUD** addresses this challenge by providing an instantaneous, zero-touch Human-Computer Interaction (HCI) interface powered by continuous spatio-temporal deep learning.
 
 Unlike basic frame-by-frame classification systems that suffer from false triggers, this pipeline implements:
-1. **Continuous 32-Frame Temporal Ring Buffering (~2.7s temporal window at 12 FPS)**.
+1. **Continuous 32-Frame Temporal Ring Buffering** (approximately 2.7 seconds temporal window at 12 FPS).
 2. **Dual-Stream Feature Normalization (131 dimensions)** capturing scale-invariant local keypoints, velocities, and global wrist trajectories.
 3. **Three Deep Learning Architectures**: Causal Dilated Temporal Convolutional Network (**TCN**), Bidirectional LSTM with Bahdanau Attention (**BiLSTM**), and Spatio-Temporal Graph Convolutional Network (**ST-GCN**).
 4. **Anti-False-Trigger Multi-Stage Gate**: Mean joint speed motion gating, temporal consistency voting, cooldown latching, and hold-to-release logic.
-5. **Sub-Millisecond ONNX Runtime CPU Inference (< 1 ms latency)** running smoothly on standard laptop hardware without a dedicated GPU.
-6. **Dark Cyber HUD Desktop Dashboard** with dynamic corner-bracket hand hitboxes, real-time diagnostic telemetry, and PyAutoGUI OS action injection.
+5. **Sub-Millisecond ONNX Runtime CPU Inference (< 1 ms latency)** running smoothly on standard laptop hardware without requiring a dedicated GPU.
+6. **Telemetry Dashboard and HUD** with dynamic corner-bracket hand hitboxes, real-time diagnostic telemetry, and PyAutoGUI OS action injection.
 
 ---
 
-## 🚀 Key Features
+## Key Features
 
 * **Real-Time 3D Landmark Tracking**: Utilizes Google MediaPipe Hands to capture 21 spatial landmarks $(x, y, z)$ at 30 FPS, downsampled via a drift-free `TimestampResampler` to a constant 12 FPS.
 * **Dual-Stream Invariant Feature Engineering**:
   * Local Stream (126-dim): Origin-centered to wrist (landmark 0), distance-normalized, with temporal first-order joint velocities.
   * Global Stream (5-dim): Wrist translation in camera frame and planar velocities.
-* **Modern HUD Hand Hitbox & Directional Tracking**:
+* **Modern HUD Hand Hitbox and Directional Tracking**:
   * Computes a dynamic bounding box with 20px padding around landmarks.
   * Overlays sleek corner brackets and floating directional indicators (`<< SWIPE LEFT`, `SWIPE RIGHT >>`, `STAY / HOLD`).
 * **Zero-Flicker Inline Base64 Viewport**:
-  * Eliminates Streamlit's temporary media file eviction glitch (`🖼️0`) by encoding video frames directly into inline base64 JPEG data URIs.
+  * Eliminates Streamlit's temporary media file eviction glitch (broken image icon '0') by encoding video frames directly into inline base64 JPEG data URIs.
 * **Multi-Stage Anti-False-Trigger Gate**:
   * **Motion Gate**: Discards static postures below `motion_threshold = 0.0035` to save compute and eliminate phantom triggers.
   * **Confidence Gate**: Requires softmax probability $\ge 0.50$ (tunable up to 0.98).
   * **Temporal Consistency Gate**: Requires 2 consecutive sliding windows to vote for the same class before firing.
-  * **Cooldown Timer**: Enforces 0.9-second refractory lockout after an action to prevent double-firing.
+  * **Cooldown Timer**: Enforces a 0.9-second refractory lockout after an action to prevent double-firing.
 * **Fail-Safe OS Action Injection**:
   * Injects keystrokes and scroll events directly into the host OS via PyAutoGUI.
   * Armed-by-default safety toggle with instant emergency abort by pushing the cursor to any screen corner.
 
 ---
 
-## 🛠 System Architecture
+## System Architecture
 
 ```mermaid
 flowchart TD
@@ -72,14 +72,14 @@ flowchart TD
     J --> K{Post-Processing Decision Gate}
     K -->|Argmax != Background & P >= 0.50| L{Temporal 2-Window Vote}
     L -->|Consistent| M{Cooldown Expired & Released?}
-    M -->|Yes| N[TRIGGERED ⚡: PyAutoGUI OS Action]
+    M -->|Yes| N[TRIGGERED: PyAutoGUI OS Action]
     M -->|No| O[BLOCKED: Cooldown / Hold]
     K -->|P < 0.50| P[BLOCKED: Low Confidence]
 ```
 
 ---
 
-## 🎮 Gesture Control Mapping
+## Gesture Control Mapping
 
 The system classifies continuous hand movements into an 8-class subset of the academic **20BN-Jester** dataset, mapped directly to operating system commands:
 
@@ -87,8 +87,8 @@ The system classifies continuous hand movements into an 8-class subset of the ac
 |:---:|:---|:---|:---:|:---|
 | **0** | **Swipe Left** | Open palm sweeps firmly from right to left | `Left Arrow` | Previous presentation slide / Photo back |
 | **1** | **Swipe Right** | Open palm sweeps firmly from left to right | `Right Arrow` | Next presentation slide / Photo forward |
-| **2** | **Scroll Up** | Index & middle fingers point up, waving upward | `Mouse Scroll (+5)` | Document / Web page scroll up |
-| **3** | **Scroll Down** | Index & middle fingers point down, waving downward | `Mouse Scroll (-5)` | Document / Web page scroll down |
+| **2** | **Scroll Up** | Index and middle fingers point up, waving upward | `Mouse Scroll (+5)` | Document / Web page scroll up |
+| **3** | **Scroll Down** | Index and middle fingers point down, waving downward | `Mouse Scroll (-5)` | Document / Web page scroll down |
 | **4** | **Zoom In** | All five fingers expand outward radially | `Ctrl` + `+` | Image viewer / Map zoom in |
 | **5** | **Zoom Out** | All fingers pinch inward toward palm center | `Ctrl` + `-` | Image viewer / Map zoom out |
 | **6** | **Stop Sign** | Open palm held upright and stationary facing camera | `Space` | Play / Pause video (YouTube / Media player) |
@@ -96,7 +96,7 @@ The system classifies continuous hand movements into an 8-class subset of the ac
 
 ---
 
-## 📊 Deep Learning Architectures & Benchmarks
+## Deep Learning Architectures and Benchmarks
 
 Three distinct spatio-temporal architectures were designed, trained, and benchmarked:
 
@@ -110,10 +110,10 @@ Three distinct spatio-temporal architectures were designed, trained, and benchma
 +----------------------------------------------------------------------------------------------------+
 ```
 
-### 1. Causal Dilated TCN (*Production Default*)
+### 1. Causal Dilated TCN (Production Default)
 * **Input**: Sequence tensor `(Batch, 32, 131)`.
 * **Architecture**: 4 residual blocks with causal 1D dilated convolutions (dilations $d \in \{1, 2, 4, 8\}$, kernel size $k=3$). Chomp 1D padding guarantees zero future leakage.
-* **Inference**: **0.80 ms** on CPU — over **25× faster** than the real-time threshold limit (20 ms). Model size: **0.49 MB**.
+* **Inference**: **0.80 ms** on CPU, which is over **25x faster** than the real-time threshold limit (20 ms). Model size: **0.49 MB**.
 
 ### 2. BiLSTM Baseline
 * **Input**: Sequence tensor `(Batch, 32, 131)`.
@@ -126,7 +126,7 @@ Three distinct spatio-temporal architectures were designed, trained, and benchma
 
 ---
 
-## 📂 Project Directory Structure
+## Directory Structure
 
 ```text
 Gesture-Control/
@@ -161,7 +161,7 @@ Gesture-Control/
 │   ├── training/
 │   │   ├── evaluate.py             # Macro F1, confusion matrices, latency benchmark
 │   │   ├── export_onnx.py          # PyTorch to ONNX export, checker & parity validator
-│   │   └── train.py                # Multi-seed training engine for scenarios E1–E12
+│   │   └── train.py                # Multi-seed training engine for scenarios E1-E12
 │   └── utils/                      # Seed setup, device auto-detect, path resolver
 └── tests/
     ├── test_app_styles.py          # Base64 data URI camera viewport unit tests
@@ -170,11 +170,11 @@ Gesture-Control/
 
 ---
 
-## 💻 Installation & Quickstart
+## Installation and Quickstart
 
 ### 1. Prerequisites
 * Windows 10/11, macOS, or Linux.
-* Python 3.10 – 3.12.
+* Python 3.10 to 3.12.
 * A standard built-in or USB webcam.
 
 ### 2. Clone & Setup Environment
@@ -201,8 +201,8 @@ pip install -r requirements.txt
 streamlit run app/main.py
 ```
 * Open your browser at `http://localhost:8501`.
-* Click **`▶ Start Camera Stream`** to begin live inference.
-* *(Optional)* Toggle **`Master Arm OS Control`** in the sidebar to enable live keyboard/mouse injection into your operating system.
+* Click **Start Camera Stream** to begin live inference.
+* *(Optional)* Toggle **Master Arm OS Control** in the sidebar to enable live keyboard/mouse injection into your operating system.
 
 ### 4. Interactive Gesture Data Recorder (CLI)
 Record custom webcam sequences directly for fine-tuning or expanding classes:
@@ -229,17 +229,17 @@ pytest -v
 
 ---
 
-## 👥 Authors & Academic Attribution
+## Authors and Academic Attribution
 
 This project is submitted as the Final Project for **COMP6826001 - Deep Learning**, Computer Science Department, Bina Nusantara University.
 
-* **Gracias Kumara Winata** — `2802459683`
-* **Vincensius Kevin Mulyono** — `2802476424`
-* **Malvin Raditya Nugraha** — `2802489206`
+* **Gracias Kumara Winata** (NIM: 2802459683)
+* **Vincensius Kevin Mulyono** (NIM: 2802476424)
+* **Malvin Raditya Nugraha** (NIM: 2802489206)
 
 ---
 
-## 📄 License & Acknowledgements
+## License and Acknowledgements
 
 * Core dataset concepts adapted from the **20BN-Jester** gesture recognition benchmark.
 * Hand keypoint estimation powered by **Google MediaPipe Hands**.
