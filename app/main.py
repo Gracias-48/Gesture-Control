@@ -29,6 +29,7 @@ importlib.reload(app.styles)
 from app.styles import (
     RAYCAST_CSS,
     render_confidence_bars,
+    render_diagnostic_bar,
     render_state_badge,
     render_telemetry_cards,
 )
@@ -191,6 +192,9 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         frame_placeholder = st.empty()
         toast_placeholder = st.empty()
 
+        # Mode Diagnostik Live di bawah webcam
+        diagnostic_placeholder = st.empty()
+
         # Riwayat Log Aksi
         st.markdown('<div class="hud-section-title" style="margin-top: 14px;">Recent Command Triggers</div>', unsafe_allow_html=True)
         log_placeholder = st.empty()
@@ -235,6 +239,23 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
                 )
             else:
                 toast_placeholder.empty()
+
+            # Mode Diagnostik Live Real-Time
+            cand_idx = tele.predicted_class if tele.predicted_class is not None else int(cfg["classes"]["background_id"])
+            cand_name = tele.class_names[cand_idx] if cand_idx < len(tele.class_names) else "None"
+            diagnostic_placeholder.markdown(
+                render_diagnostic_bar(
+                    candidate_name=cand_name,
+                    candidate_conf=tele.predicted_confidence,
+                    motion_passed=tele.motion_gate_passed,
+                    motion_speed=tele.motion_speed,
+                    motion_threshold=float(cfg["postprocessing"]["motion_threshold"]),
+                    gate_reason=tele.gate_reason,
+                    consistency_count=tele.consistency_count,
+                    consistency_target=tele.consistency_target,
+                ),
+                unsafe_allow_html=True,
+            )
 
             # Telemetry Cards & Confidence Bars
             telemetry_placeholder.markdown(
@@ -294,6 +315,19 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
             unsafe_allow_html=True,
         )
         tele = engine.telemetry
+        diagnostic_placeholder.markdown(
+            render_diagnostic_bar(
+                candidate_name="Standby",
+                candidate_conf=0.0,
+                motion_passed=False,
+                motion_speed=0.0,
+                motion_threshold=float(cfg["postprocessing"]["motion_threshold"]),
+                gate_reason="STANDBY: Camera Off",
+                consistency_count=0,
+                consistency_target=int(cfg["postprocessing"]["consecutive_windows"]),
+            ),
+            unsafe_allow_html=True,
+        )
         telemetry_placeholder.markdown(
             render_telemetry_cards(0.0, 0.0, 0, 32, 0.0, tele.os_armed),
             unsafe_allow_html=True,

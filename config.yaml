@@ -196,10 +196,10 @@ inference:
 # Anti-false-trigger post-processing gate (PRD FR-04, APP_FLOW §1 [4] & [6])
 # -----------------------------------------------------------------------------
 postprocessing:
-  confidence_threshold: 0.80
-  consecutive_windows: 3
+  confidence_threshold: 0.50
+  consecutive_windows: 2
   cooldown_s: 0.9               # valid range 0.8 – 1.0 s
-  motion_threshold: 0.006       # mean joint speed (image-height units / frame)
+  motion_threshold: 0.0035      # mean joint speed (image-height units / frame)
   motion_window: 32             # frames used by the motion gate
   require_release: true         # same class cannot re-fire until prediction changes
   hand_absent_reset_s: 1.0      # clear buffer if no hand for > 1 s

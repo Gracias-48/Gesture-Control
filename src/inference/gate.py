@@ -94,12 +94,12 @@ class PostProcessGate:
     def update(self, probs: Optional[np.ndarray], motion_ok: bool, now: float) -> GateDecision:
         cd = self.cooldown_remaining(now)
         pred, conf = None, 0.0
-        if probs is not None and motion_ok:
+        if probs is not None:
             pred, conf = int(np.argmax(probs)), float(np.max(probs))
 
         not_bg = pred is not None and pred != self.background_id
         conf_ok = not_bg and conf >= self.cfg.confidence_threshold
-        raw_candidate = pred if conf_ok else None
+        raw_candidate = pred if (conf_ok and motion_ok) else None
 
         # Release rule (evaluated on the raw candidate, independent of cooldown)
         if self.last_fired_class is not None and raw_candidate != self.last_fired_class:
@@ -125,7 +125,24 @@ class PostProcessGate:
             "released": bool(released),
         }
         fire = all(checks.values())
-        reason = "fire" if fire else next(k for k, v in checks.items() if not v)
+
+        if fire:
+            reason = "TRIGGERED"
+        elif cd > 0.0:
+            reason = f"BLOCKED: Cooldown ({cd:.1f}s)"
+        elif not motion_ok:
+            reason = "BLOCKED: Motion Below Threshold"
+        elif pred == self.background_id:
+            reason = "MONITORING: Background Gesture"
+        elif not conf_ok:
+            reason = f"BLOCKED: Low Confidence ({conf*100:.1f}% < {self.cfg.confidence_threshold*100:.0f}%)"
+        elif consistency < self.cfg.consecutive_windows:
+            reason = f"MONITORING: Consistency ({consistency}/{self.cfg.consecutive_windows})"
+        elif not released:
+            reason = "BLOCKED: Gesture Not Released"
+        else:
+            reason = "MONITORING"
+
         if fire:
             self.last_trigger_t = now
             self.last_fired_class = raw_candidate
