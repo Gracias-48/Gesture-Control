@@ -1,0 +1,38 @@
+{
+  "model": "bilstm",
+  "display_name": "BiLSTM",
+  "kind": "sequence",
+  "input_layout": "B,T,F",
+  "T": 32,
+  "feature_dim": 131,
+  "use_global": true,
+  "num_classes": 8,
+  "class_names": [
+    "Swipe Left",
+    "Swipe Right",
+    "Scroll Up",
+    "Scroll Down",
+    "Zoom In",
+    "Zoom Out",
+    "Stop",
+    "Background"
+  ],
+  "input_name": "input",
+  "output_name": "probs",
+  "scaler": "bilstm_scaler.npz",
+  "params": 743560,
+  "size_mb": 2.845,
+  "parity_max_abs_diff": 1.4901161193847656e-08,
+  "onnx_latency": {
+    "mean_ms": 1.6029344997150474,
+    "std_ms": 0.7964606386473794,
+    "p50_ms": 1.2402999982441543,
+    "p95_ms": 2.959900002497306,
+    "max_ms": 5.037999999331078
+  },
+  "opset": 17,
+  "source_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E1\\seed42\\best.pt",
+  "exp_id": "E1",
+  "val_macro_f1": 0.13333333333333333,
+  "dummy": false
+}

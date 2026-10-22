@@ -1,0 +1,38 @@
+{
+  "model": "tcn",
+  "display_name": "TCN",
+  "kind": "sequence",
+  "input_layout": "B,T,F",
+  "T": 32,
+  "feature_dim": 131,
+  "use_global": true,
+  "num_classes": 8,
+  "class_names": [
+    "Swipe Left",
+    "Swipe Right",
+    "Scroll Up",
+    "Scroll Down",
+    "Zoom In",
+    "Zoom Out",
+    "Stop",
+    "Background"
+  ],
+  "input_name": "input",
+  "output_name": "probs",
+  "scaler": "tcn_scaler.npz",
+  "params": 121672,
+  "size_mb": 0.486,
+  "parity_max_abs_diff": 4.470348358154297e-08,
+  "onnx_latency": {
+    "mean_ms": 0.39021449994834256,
+    "std_ms": 0.44951482734536585,
+    "p50_ms": 0.26524999884713907,
+    "p95_ms": 0.7312299991099277,
+    "max_ms": 5.476800000906223
+  },
+  "opset": 17,
+  "source_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E9\\seed42\\best.pt",
+  "exp_id": "E9",
+  "val_macro_f1": 0.15795454545454546,
+  "dummy": false
+}

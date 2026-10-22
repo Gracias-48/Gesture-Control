@@ -1,0 +1,38 @@
+{
+  "model": "stgcn",
+  "display_name": "ST-GCN",
+  "kind": "graph",
+  "input_layout": "B,C,T,V",
+  "T": 32,
+  "feature_dim": 10,
+  "use_global": true,
+  "num_classes": 8,
+  "class_names": [
+    "Swipe Left",
+    "Swipe Right",
+    "Scroll Up",
+    "Scroll Down",
+    "Zoom In",
+    "Zoom Out",
+    "Stop",
+    "Background"
+  ],
+  "input_name": "input",
+  "output_name": "probs",
+  "scaler": "stgcn_scaler.npz",
+  "params": 475800,
+  "size_mb": 1.836,
+  "parity_max_abs_diff": 1.4901161193847656e-08,
+  "onnx_latency": {
+    "mean_ms": 4.768785000105709,
+    "std_ms": 1.3535743256956008,
+    "p50_ms": 4.338900000220747,
+    "p95_ms": 6.052595000801375,
+    "max_ms": 17.08420000068145
+  },
+  "opset": 17,
+  "source_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E5\\seed42\\best.pt",
+  "exp_id": "E5",
+  "val_macro_f1": 0.5625,
+  "dummy": false
+}

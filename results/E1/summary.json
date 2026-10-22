@@ -1,0 +1,44 @@
+{
+  "row": {
+    "run_id": "E1",
+    "exp_id": "E1",
+    "model": "bilstm",
+    "ablation": "none",
+    "optimizer": "adam",
+    "lr": 0.001,
+    "batch_size": 64,
+    "epochs": 2,
+    "dropout": 0.3,
+    "weight_decay": 0.0,
+    "scheduler": "constant",
+    "T": 32,
+    "use_global": true,
+    "augmentation": true,
+    "num_classes": 8,
+    "params": 743560,
+    "n_seeds": 1,
+    "val_f1_mean": 0.13333333333333333,
+    "val_f1_std": 0.0,
+    "test_f1_mean": 0.10833333333333334,
+    "test_f1_std": 0.0,
+    "test_acc_mean": 0.16666666666666666,
+    "test_acc_std": 0.0,
+    "test_precision_mean": 0.11378205128205127,
+    "test_recall_mean": 0.14583333333333331,
+    "control_precision_mean": 0.13003663003663002,
+    "latency_ms_mean": 15.045250500061229,
+    "best_epoch_mean": 1.0,
+    "best_seed": 42,
+    "best_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E1\\seed42\\best.pt"
+  },
+  "seeds": [
+    {
+      "seed": 42,
+      "macro_f1": 0.10833333333333334,
+      "accuracy": 0.16666666666666666,
+      "val_macro_f1": 0.13333333333333333,
+      "best_epoch": 1,
+      "checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E1\\seed42\\best.pt"
+    }
+  ]
+}
