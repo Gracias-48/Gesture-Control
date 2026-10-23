@@ -105,21 +105,21 @@ Three distinct spatio-temporal architectures were designed, trained, and benchma
 +----------------------------------------------------------------------------------------------------+
 | Model Architecture          | Input Kind | Parameters | Val Macro F1 | Test Acc | CPU Latency (ONNX) |
 +----------------------------------------------------------------------------------------------------+
-| Causal Dilated TCN (E10)    | Sequence   |    121,672 |       0.7855 |   75.83% |            0.80 ms |
-| BiLSTM + Attention (E2)     | Sequence   |    743,560 |       0.5549 |   59.17% |            1.81 ms |
-| 21-Node ST-GCN (E6)         | Graph      |    485,320 |       0.7120 |   68.45% |            3.14 ms |
+| Causal Dilated TCN (E10)    | Sequence   |    121,672 |       0.9737 |   97.39% |            0.37 ms |
+| BiLSTM + Attention (E2)     | Sequence   |    743,560 |       0.9737 |   98.10% |            1.72 ms |
+| 21-Node ST-GCN (E6)         | Graph      |    475,800 |       0.9712 |   97.15% |            5.06 ms |
 +----------------------------------------------------------------------------------------------------+
 ```
 
 ### 1. Causal Dilated TCN (Production Default)
 * **Input**: Sequence tensor `(Batch, 32, 131)`.
 * **Architecture**: 4 residual blocks with causal 1D dilated convolutions (dilations $d \in \{1, 2, 4, 8\}$, kernel size $k=3$). Chomp 1D padding guarantees zero future leakage.
-* **Inference**: **0.80 ms** on CPU, which is over **25x faster** than the real-time threshold limit (20 ms). Model size: **0.49 MB**.
+* **Inference**: **0.37 ms** on CPU, which is over **50x faster** than the real-time threshold limit (20 ms). Model size: **0.49 MB**.
 
 ### 2. BiLSTM Baseline
 * **Input**: Sequence tensor `(Batch, 32, 131)`.
 * **Architecture**: Linear projection (128-dim) $\rightarrow$ 2-layer Bidirectional LSTM (hidden size 128) $\rightarrow$ Bahdanau additive temporal attention pooling $\rightarrow$ FC classifier.
-* **Inference**: **1.81 ms** on CPU. Model size: **2.85 MB**.
+* **Inference**: **1.72 ms** on CPU. Model size: **2.85 MB**.
 
 ### 3. Spatio-Temporal Graph Convolutional Network (ST-GCN)
 * **Input**: Graph tensor `(Batch, 10, 32, 21)` (10 spatio-temporal channels over 21 anatomical hand joints).

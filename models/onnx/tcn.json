@@ -24,15 +24,15 @@
   "size_mb": 0.486,
   "parity_max_abs_diff": 8.940696716308594e-08,
   "onnx_latency": {
-    "mean_ms": 0.7967610000025616,
-    "std_ms": 1.4811763808510956,
-    "p50_ms": 0.5340500000556858,
-    "p95_ms": 1.2605849998408298,
-    "max_ms": 19.953700000087338
+    "mean_ms": 0.36961499999961234,
+    "std_ms": 0.03787176745443436,
+    "p50_ms": 0.3571500001271488,
+    "p95_ms": 0.43565000005401083,
+    "max_ms": 0.5869999986316543
   },
   "opset": 17,
-  "source_checkpoint": "runs/E10/seed42/best.pt",
+  "source_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Dokumen\\Deep Learning\\runs\\E10\\seed42\\best.pt",
   "exp_id": "E10",
-  "val_macro_f1": 0.7854599104599105,
+  "val_macro_f1": 0.9737237237237237,
   "dummy": false
 }

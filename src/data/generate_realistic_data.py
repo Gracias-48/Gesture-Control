@@ -42,6 +42,14 @@ CANONICAL_HAND = np.array([
     [0.09, -0.11, 0.02],   # 20: Pinky Tip
 ], dtype=np.float32)
 
+FINGER_JOINTS = [
+    [1, 2, 3, 4],       # Thumb
+    [6, 7, 8],          # Index
+    [10, 11, 12],       # Middle
+    [14, 15, 16],       # Ring
+    [18, 19, 20],       # Pinky
+]
+
 
 def generate_kinematic_clip(
     class_id: int,
@@ -52,121 +60,181 @@ def generate_kinematic_clip(
     if rng is None:
         rng = np.random.default_rng()
 
-    # Variasi anatomis ukuran tangan per pengguna
-    hand_scale = rng.uniform(0.85, 1.15)
-    base_hand = CANONICAL_HAND * hand_scale
+    # Variasi anatomis ukuran tangan per pengguna & jarak ke webcam
+    hand_scale = rng.uniform(0.78, 1.22)
+    base_hand = (CANONICAL_HAND * hand_scale).copy()
 
-    # Sedikit rotasi orientasi tangan awal
-    roll = rng.uniform(-0.15, 0.15)
-    c, s = math.cos(roll), math.sin(roll)
-    rot_matrix = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]], dtype=np.float32)
+    # Variasi orientasi roll dan pitch natural tangan
+    roll = rng.uniform(-0.18, 0.18)
+    pitch = rng.uniform(-0.12, 0.12)
+    cr, sr = math.cos(roll), math.sin(roll)
+    cp, sp = math.cos(pitch), math.sin(pitch)
+    rot_roll = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]], dtype=np.float32)
+    rot_pitch = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]], dtype=np.float32)
+    rot_matrix = rot_pitch @ rot_roll
     base_hand = base_hand @ rot_matrix.T
 
     # Posisi awal pergelangan tangan (wrist)
-    wrist_x0 = rng.uniform(-0.10, 0.10)
-    wrist_y0 = rng.uniform(-0.05, 0.10)
-    wrist_z0 = rng.uniform(-0.02, 0.02)
+    wrist_x0 = rng.uniform(-0.12, 0.12)
+    wrist_y0 = rng.uniform(-0.06, 0.10)
+    wrist_z0 = rng.uniform(-0.03, 0.03)
 
     seq = np.zeros((T, NUM_JOINTS, 3), dtype=np.float32)
 
-    # Buat kurva waktu ter-normalisasi [0, 1] dengan kurva kecepatan alami (smooth bell profile)
-    t_norm = np.linspace(0.0, 1.0, T, dtype=np.float32)
-    smooth_step = 0.5 * (1.0 - np.cos(np.pi * t_norm))  # 0 -> 1 smooth sigmoid
+    # Kurva waktu ternormalisasi dengan sedikit variasi eksponensial (kecepatan non-linear natural)
+    t_raw = np.linspace(0.0, 1.0, T, dtype=np.float32)
+    warp_exp = rng.uniform(0.85, 1.18)
+    t_norm = t_raw ** warp_exp
+    smooth_step = 0.5 * (1.0 - np.cos(np.pi * t_norm))
+
+    # Definisi pose terlipat/pinched dan pose terbuka/splayed dengan rigid palm MCP (0, 5, 9, 13, 17)
+    pinch_target = base_hand[9] + np.array([0.0, -0.04, 0.0], dtype=np.float32)
+    pinched_hand = base_hand.copy()
+    for fj in FINGER_JOINTS:
+        for rank, idx in enumerate(fj):
+            factor = (rank + 1) / len(fj)
+            pinched_hand[idx] = base_hand[idx] * (1.0 - factor * 0.82) + pinch_target * (factor * 0.82)
+
+    splayed_hand = base_hand.copy()
+    splayed_hand[4] += np.array([-0.065, 0.015, -0.01], dtype=np.float32)
+    splayed_hand[8] += np.array([-0.045, -0.055, -0.01], dtype=np.float32)
+    splayed_hand[12] += np.array([0.000, -0.065, 0.00], dtype=np.float32)
+    splayed_hand[16] += np.array([0.045, -0.055, 0.01], dtype=np.float32)
+    splayed_hand[20] += np.array([0.065, 0.015, 0.01], dtype=np.float32)
+    # Intermediate finger joints follow their tips
+    for fj in FINGER_JOINTS:
+        tip_idx = fj[-1]
+        tip_disp = splayed_hand[tip_idx] - base_hand[tip_idx]
+        for rank, idx in enumerate(fj[:-1]):
+            factor = (rank + 1) / len(fj)
+            splayed_hand[idx] += tip_disp * factor * 0.70
 
     if class_id == 0:
-        # --- SWIPE LEFT: Wrist meluncur dari kanan ke kiri secara cepat & tegas ---
-        amplitude = rng.uniform(0.35, 0.55)
+        # --- SWIPE LEFT: Wrist meluncur dari kanan (+x) ke kiri (-x) ---
+        amplitude = rng.uniform(0.38, 0.58)
+        arc_depth = rng.uniform(-0.04, 0.03)
         for t in range(T):
-            dx = amplitude * (0.5 - smooth_step[t])  # dari +amp/2 ke -amp/2
-            dy = 0.03 * math.sin(math.pi * t_norm[t]) # sedikit lengkungan vertikal
-            seq[t] = base_hand + np.array([wrist_x0 + dx, wrist_y0 + dy, wrist_z0], dtype=np.float32)
+            dx = amplitude * (0.5 - smooth_step[t])
+            dy = arc_depth * math.sin(math.pi * t_norm[t])
+            # Sedikit drag inersia pada ujung jari
+            drag_x = 0.02 * math.sin(math.pi * t_norm[t])
+            hand_t = base_hand.copy()
+            hand_t[1:] += np.array([drag_x, 0.0, 0.0], dtype=np.float32)
+            seq[t] = hand_t + np.array([wrist_x0 + dx, wrist_y0 + dy, wrist_z0], dtype=np.float32)
 
     elif class_id == 1:
-        # --- SWIPE RIGHT: Wrist meluncur dari kiri ke kanan ---
-        amplitude = rng.uniform(0.35, 0.55)
+        # --- SWIPE RIGHT: Wrist meluncur dari kiri (-x) ke kanan (+x) ---
+        amplitude = rng.uniform(0.38, 0.58)
+        arc_depth = rng.uniform(-0.04, 0.03)
         for t in range(T):
-            dx = amplitude * (smooth_step[t] - 0.5)  # dari -amp/2 ke +amp/2
-            dy = 0.03 * math.sin(math.pi * t_norm[t])
-            seq[t] = base_hand + np.array([wrist_x0 + dx, wrist_y0 + dy, wrist_z0], dtype=np.float32)
+            dx = amplitude * (smooth_step[t] - 0.5)
+            dy = arc_depth * math.sin(math.pi * t_norm[t])
+            drag_x = -0.02 * math.sin(math.pi * t_norm[t])
+            hand_t = base_hand.copy()
+            hand_t[1:] += np.array([drag_x, 0.0, 0.0], dtype=np.float32)
+            seq[t] = hand_t + np.array([wrist_x0 + dx, wrist_y0 + dy, wrist_z0], dtype=np.float32)
 
     elif class_id == 2:
-        # --- SCROLL UP: Telunjuk & Jari Tengah mengayun ke atas berulang kali ---
-        cycle_freq = rng.uniform(1.8, 2.5)
+        # --- SCROLL UP: Telunjuk & Jari Tengah mengayun / flick ke atas berulang kali ---
+        cycle_freq = rng.uniform(1.8, 2.6)
+        amp = rng.uniform(0.065, 0.095)
         for t in range(T):
-            wave = -0.07 * math.sin(2.0 * math.pi * cycle_freq * t_norm[t])  # ke atas (y negatif)
+            # Ayunan asimetris: flick ke atas cepat (-y), kembali rileks
+            wave = -amp * abs(math.sin(math.pi * cycle_freq * t_norm[t]))
             hand_t = base_hand.copy()
-            # Tekuk jari manis & kelingking ke bawah
-            hand_t[[14, 15, 16, 18, 19, 20], 1] += 0.08
-            # Ayunkan telunjuk dan jari tengah
+            # Tekuk jari manis dan kelingking ke telapak
+            hand_t[[14, 15, 16], 1] += 0.09
+            hand_t[[18, 19, 20], 1] += 0.09
+            # Telunjuk dan jari tengah mengayun ke atas
             hand_t[[6, 7, 8, 10, 11, 12], 1] += wave
             seq[t] = hand_t + np.array([wrist_x0, wrist_y0, wrist_z0], dtype=np.float32)
 
     elif class_id == 3:
-        # --- SCROLL DOWN: Telunjuk & Jari Tengah mengayun ke bawah berulang kali ---
-        cycle_freq = rng.uniform(1.8, 2.5)
+        # --- SCROLL DOWN: Telunjuk & Jari Tengah mengayun / flick ke bawah berulang kali ---
+        cycle_freq = rng.uniform(1.8, 2.6)
+        amp = rng.uniform(0.065, 0.095)
         for t in range(T):
-            wave = 0.07 * math.sin(2.0 * math.pi * cycle_freq * t_norm[t])  # ke bawah (y positif)
+            # Ayunan flick ke bawah (+y)
+            wave = amp * abs(math.sin(math.pi * cycle_freq * t_norm[t]))
             hand_t = base_hand.copy()
-            # Tekuk jari manis & kelingking
-            hand_t[[14, 15, 16, 18, 19, 20], 1] += 0.08
-            # Ayunkan telunjuk dan tengah ke bawah
+            # Tekuk jari manis dan kelingking
+            hand_t[[14, 15, 16], 1] += 0.09
+            hand_t[[18, 19, 20], 1] += 0.09
+            # Telunjuk dan jari tengah mengayun ke bawah
             hand_t[[6, 7, 8, 10, 11, 12], 1] += wave
             seq[t] = hand_t + np.array([wrist_x0, wrist_y0, wrist_z0], dtype=np.float32)
 
     elif class_id == 4:
-        # --- ZOOM IN: Seluruh jari tangan mengembang melebar keluar (ekspansi radius) ---
+        # --- ZOOM IN: Tangan bermula dari pose pinched lalu mengembang melebar ke luar ---
+        # Rigid palm joints (0, 5, 9, 13, 17) tetap konstan, sementara jari merekah keluar
+        start_factor = rng.uniform(0.0, 0.15)
+        end_factor = rng.uniform(0.85, 1.0)
         for t in range(T):
-            exp_factor = 0.70 + 0.60 * smooth_step[t]  # dari 0.70x ke 1.30x
-            hand_t = base_hand.copy()
-            # Ujung jari mengembang menjauhi telapak tangan
-            hand_t[1:] = hand_t[0:1] + (hand_t[1:] - hand_t[0:1]) * exp_factor
+            alpha = start_factor + (end_factor - start_factor) * smooth_step[t]
+            hand_t = (1.0 - alpha) * pinched_hand + alpha * splayed_hand
             seq[t] = hand_t + np.array([wrist_x0, wrist_y0, wrist_z0], dtype=np.float32)
 
     elif class_id == 5:
-        # --- ZOOM OUT: Seluruh jari menguncup rapat ke pusat telapak tangan ---
+        # --- ZOOM OUT: Tangan bermula dari pose merekah lalu menguncup rapat ke pusat telapak ---
+        start_factor = rng.uniform(0.85, 1.0)
+        end_factor = rng.uniform(0.0, 0.15)
         for t in range(T):
-            pinch_factor = 1.30 - 0.65 * smooth_step[t]  # dari 1.30x ke 0.65x
-            hand_t = base_hand.copy()
-            hand_t[1:] = hand_t[0:1] + (hand_t[1:] - hand_t[0:1]) * pinch_factor
+            alpha = start_factor + (end_factor - start_factor) * smooth_step[t]
+            hand_t = (1.0 - alpha) * pinched_hand + alpha * splayed_hand
             seq[t] = hand_t + np.array([wrist_x0, wrist_y0, wrist_z0], dtype=np.float32)
 
     elif class_id == 6:
         # --- STOP SIGN: Telapak tangan terbuka tegak menghadap kamera, posisi sangat stabil ---
         for t in range(T):
-            # Mikro-tremor natural tangan manusia yang sedang menahan pose diam
-            tremor = rng.normal(0.0, 0.0015, size=(NUM_JOINTS, 3)).astype(np.float32)
+            tremor = rng.normal(0.0, 0.00035, size=(NUM_JOINTS, 3)).astype(np.float32)
             seq[t] = base_hand + np.array([wrist_x0, wrist_y0, wrist_z0], dtype=np.float32) + tremor
 
     else:
-        # --- BACKGROUND (ID 7): Gerakan santai, mengetik, diam, atau gerakan acak tanpa pola ---
-        bg_type = rng.integers(0, 3)
-        if bg_type == 0:
-            # Tangan santai diam di bawah
+        # --- BACKGROUND (ID 7): Beragam gerak non-perintah (idle, mengetik, drift lambat, dll.) ---
+        bg_mode = rng.integers(0, 5)
+        if bg_mode == 0:
+            # Tangan santai diam di bawah frame
             for t in range(T):
-                tremor = rng.normal(0.0, 0.001, size=(NUM_JOINTS, 3)).astype(np.float32)
-                seq[t] = base_hand + np.array([wrist_x0, wrist_y0 + 0.15, wrist_z0], dtype=np.float32) + tremor
-        elif bg_type == 1:
-            # Gerakan mengetik / artikulasi jari kecil di tempat
+                tremor = rng.normal(0.0, 0.0004, size=(NUM_JOINTS, 3)).astype(np.float32)
+                seq[t] = base_hand + np.array([wrist_x0, wrist_y0 + 0.16, wrist_z0], dtype=np.float32) + tremor
+        elif bg_mode == 1:
+            # Mengetik di keyboard: jari bergerak kecil secara independen & asinkron
             for t in range(T):
                 hand_t = base_hand.copy()
-                finger_wiggle = rng.normal(0.0, 0.008, size=NUM_JOINTS)
-                hand_t[:, 1] += finger_wiggle
-                seq[t] = hand_t + np.array([wrist_x0, wrist_y0 + 0.10, wrist_z0], dtype=np.float32)
-        else:
-            # Drift lambat non-perintah
-            drift_x = rng.uniform(-0.08, 0.08)
-            drift_y = rng.uniform(-0.06, 0.06)
+                for fj in FINGER_JOINTS:
+                    freq_f = rng.uniform(2.0, 4.0)
+                    wiggle = 0.012 * math.sin(2.0 * math.pi * freq_f * t_norm[t])
+                    hand_t[fj, 1] += wiggle
+                seq[t] = hand_t + np.array([wrist_x0, wrist_y0 + 0.12, wrist_z0], dtype=np.float32)
+        elif bg_mode == 2:
+            # Drift lambat tidak tegas (kecepatan sangat rendah, bukan swipe)
+            drift_x = rng.uniform(-0.06, 0.06)
+            drift_y = rng.uniform(-0.05, 0.05)
             for t in range(T):
                 dx = drift_x * t_norm[t]
                 dy = drift_y * t_norm[t]
                 seq[t] = base_hand + np.array([wrist_x0 + dx, wrist_y0 + dy, wrist_z0], dtype=np.float32)
+        elif bg_mode == 3:
+            # Tangan mengepal / santai sebagian
+            curled_hand = base_hand.copy()
+            for fj in FINGER_JOINTS:
+                curled_hand[fj, 1] += 0.08
+            for t in range(T):
+                tremor = rng.normal(0.0, 0.0004, size=(NUM_JOINTS, 3)).astype(np.float32)
+                seq[t] = curled_hand + np.array([wrist_x0, wrist_y0 + 0.05, wrist_z0], dtype=np.float32) + tremor
+        else:
+            # Tangan bergerak acak menuju/keluar kamera
+            for t in range(T):
+                dx = 0.03 * math.sin(1.5 * math.pi * t_norm[t])
+                dy = 0.03 * math.cos(1.5 * math.pi * t_norm[t])
+                seq[t] = base_hand + np.array([wrist_x0 + dx, wrist_y0 + dy, wrist_z0], dtype=np.float32)
 
-    # Tambahkan jitter sensor kamera realistis MediaPipe
-    sensor_noise = rng.normal(0.0, 0.002, size=seq.shape).astype(np.float32)
+    # Tambahkan jitter sensor MediaPipe real-time (~0.0004 image-height units)
+    sensor_noise = rng.normal(0.0, 0.0004, size=seq.shape).astype(np.float32)
     return seq + sensor_noise
 
 
-def build_realistic_dataset(cfg: dict, samples_per_class: int = 60) -> None:
+def build_realistic_dataset(cfg: dict, samples_per_class: int = 350) -> None:
     """Generate kinematic dataset, simpan ke data/interim_landmarks, lalu bangun T=32 splits."""
     interim = resolve_path(cfg, "interim_dir")
     interim.mkdir(parents=True, exist_ok=True)
@@ -174,13 +242,14 @@ def build_realistic_dataset(cfg: dict, samples_per_class: int = 60) -> None:
     names = cfg["classes"]["names"]
     rng = np.random.default_rng(cfg["project"].get("seed", 42))
 
-    print(f"\n[Kinematic Generator] Membangun {samples_per_class} klip/kelas ({samples_per_class * len(names)} total)...")
+    total_samples = samples_per_class * len(names)
+    print(f"\n[Kinematic Generator] Membangun {samples_per_class} klip/kelas ({total_samples} total)...")
 
     rows = []
     for class_id, class_name in enumerate(names):
-        print(f"  • Membangun Kelas {class_id}: '{class_name}'...")
+        print(f"  • Membangun Kelas {class_id}: '{class_name}' ({samples_per_class} klip)...")
         for s in range(samples_per_class):
-            vid = f"kinematic_{class_id}_{s:03d}"
+            vid = f"kinematic_{class_id}_{s:04d}"
             seq = generate_kinematic_clip(class_id=class_id, T=32, rng=rng)
             out_file = interim / f"{vid}.npy"
             np.save(out_file, seq)
@@ -206,7 +275,7 @@ def build_realistic_dataset(cfg: dict, samples_per_class: int = 60) -> None:
 def main():
     ap = argparse.ArgumentParser(description="Generate realistic kinematic gesture dataset")
     ap.add_argument("--config", default=None)
-    ap.add_argument("--samples", type=int, default=60, help="Jumlah sampel per kelas (default: 60)")
+    ap.add_argument("--samples", type=int, default=350, help="Jumlah sampel per kelas (default: 350)")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
