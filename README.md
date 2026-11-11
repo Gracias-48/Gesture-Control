@@ -13,7 +13,7 @@
 
 **A production-grade, CPU-optimized desktop utility and telemetry HUD that enables touchless computer control via natural hand gestures using standard webcam hardware.**
 
-[Key Features](#key-features) | [System Architecture](#system-architecture) | [Gesture Mapping](#gesture-control-mapping) | [Model Benchmarks](#deep-learning-architectures-and-benchmarks) | [Installation & Quickstart](#installation-and-quickstart) | [License](#license-and-acknowledgements)
+[Key Features](#key-features) | [System Architecture](#system-architecture) | [Gesture Mapping](#gesture-control-mapping) | [Model Benchmarks](#deep-learning-architectures-and-benchmarks) | [Installation & Quickstart](#installation-and-quickstart)
 
 
 ---
@@ -227,12 +227,3 @@ python -m src.training.export_onnx --checkpoint runs/E2/seed42/best.pt
 # Run automated unit tests:
 pytest -v
 ```
-
----
-
-## License and Acknowledgements
-
-* Core dataset concepts adapted from the **20BN-Jester** gesture recognition benchmark.
-* Hand keypoint estimation powered by **Google MediaPipe Hands**.
-* Designed with reference to modern command-palette aesthetics inspired by **Raycast**.
-* Licensed under the [MIT License](LICENSE).
