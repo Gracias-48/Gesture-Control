@@ -274,3 +274,120 @@ def test_disabled_classes_masked_in_gate():
 
 
 
+
+def _base_pinch() -> np.ndarray:
+    pinch = _make_base_palm()
+    pinch[3] = [0.39, 0.45, 0.0]
+    pinch[4] = [0.41, 0.40, 0.0]
+    pinch[7] = [0.41, 0.41, 0.0]
+    pinch[8] = [0.412, 0.402, 0.0]
+    return pinch
+
+
+def test_static_stop_bypasses_motion_gate_with_longer_hold():
+    from src.inference.gate import GateConfig, PostProcessGate
+
+    cfg = GateConfig(confidence_threshold=0.50, consecutive_windows=2, cooldown_s=0.5,
+                     static_ids=(6,), static_consecutive_windows=4)
+    gate = PostProcessGate(cfg, background_id=7, disabled_ids={0, 1, 4, 5})
+    probs = np.zeros(8, dtype=np.float32)
+    probs[6] = 0.70
+    probs[7] = 0.30
+    # Stationary Stop sign (motion_ok=False) needs 4 windows, then fires once
+    fired = [gate.update(probs, motion_ok=False, now=1.0 + 0.3 * i, motion_speed=0.0012).fire for i in range(4)]
+    assert fired == [False, False, False, True]
+    # Stop predicted while the hand is moving fast -> blocked by the stillness gate
+    gate.reset()
+    moving = [gate.update(probs, motion_ok=True, now=10.0 + 0.3 * i, motion_speed=0.006) for i in range(5)]
+    assert not any(d.fire for d in moving) and moving[-1].reason == "BLOCKED: Hold Still"
+    # Dynamic class is still blocked when there is no motion
+    probs_scroll = np.zeros(8, dtype=np.float32)
+    probs_scroll[2] = 0.95
+    d = gate.update(probs_scroll, motion_ok=False, now=5.0)
+    assert not d.fire and "Motion" in d.reason
+
+
+def test_os_scroll_uses_wheel_notches_on_windows(monkeypatch):
+    import sys
+    from unittest.mock import MagicMock
+
+    from src.inference.controller import OSActionController
+
+    ctrl = OSActionController({2: {"type": "scroll", "clicks": 5, "label": "Scroll Up", "shortcut": "x"}},
+                              armed=True)
+    ctrl._pg = MagicMock()
+    ctrl.available = True
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert ctrl.execute(2).executed
+    ctrl._pg.scroll.assert_called_once_with(600)
+
+
+def test_pinch_scroll_survives_sideways_drift():
+    import time
+
+    ctrl = VirtualMouseController(failsafe=True)
+    pinch = _base_pinch()
+    for gest in (Gest.PINCH_MINOR, Gest.PINCH_MAJOR):
+        ctrl.handle_controls(Gest.PALM, pinch, armed=False, mirrored=True)
+        ctrl.handle_controls(gest, pinch, armed=False, mirrored=True)
+        p = pinch.copy()
+        events = []
+        for _ in range(8):
+            p = p.copy()
+            p[8, 1] += 0.025  # moving down
+            p[8, 0] += 0.015  # natural sideways drift
+            time.sleep(0.09)
+            events.append(ctrl.handle_controls(gest, p, armed=False, mirrored=True))
+        assert events.count("Scroll Down") == 8, (gest, events)
+        assert not any(e and "Volume" in e for e in events)
+
+
+def test_natural_pinch_poses_detected_and_fist_rejected():
+    def stable(lm):
+        r = HandRecog(hand_label=HLabel.MINOR)
+        return _stabilize_gesture(r, lm)
+
+    # Pinch with middle/ring/pinky folded
+    nat = _base_pinch()
+    _fold_finger(nat, 9, 10, 11, 12)
+    _fold_finger(nat, 13, 14, 15, 16)
+    _fold_finger(nat, 17, 18, 19, 20)
+    nat[8] = [0.44, 0.42, 0.0]
+    nat[4] = [0.40, 0.46, 0.0]
+    assert stable(nat) == Gest.PINCH_MINOR
+
+    # Hand closer to camera (larger), looser absolute distance
+    big = _base_pinch()
+    big = big[0] + (big - big[0]) * 1.6
+    big[4] = big[8] + np.array([0.045, 0.045, 0.0], np.float32)
+    _fold_finger(big, 9, 10, 11, 12)
+    assert stable(big) == Gest.PINCH_MINOR
+
+    # Real fist (thumb over the index middle phalanx) must stay FIST
+    fist = _make_base_palm()
+    fist[4] = [0.48, 0.65, 0.0]
+    _fold_finger(fist, 5, 6, 7, 8)
+    _fold_finger(fist, 9, 10, 11, 12)
+    _fold_finger(fist, 13, 14, 15, 16)
+    _fold_finger(fist, 17, 18, 19, 20)
+    assert stable(fist) == Gest.FIST
+
+
+def test_double_click_requires_still_hold_not_slide():
+    ctrl = VirtualMouseController(failsafe=True)
+    lm = _make_base_palm()
+
+    # Still hold -> Double Click after the hold frames
+    ctrl.handle_controls(Gest.V_GEST, lm, armed=False, mirrored=True)
+    events = [ctrl.handle_controls(Gest.TWO_FINGER_CLOSED, lm, armed=False, mirrored=True) for _ in range(6)]
+    assert events.count("Double Click") == 1
+
+    # Sliding two fingers (AI scroll gesture) -> never Double Click
+    ctrl.handle_controls(Gest.V_GEST, lm, armed=False, mirrored=True)
+    p = lm.copy()
+    events = []
+    for _ in range(8):
+        p = p.copy()
+        p[:, 1] -= 0.02
+        events.append(ctrl.handle_controls(Gest.TWO_FINGER_CLOSED, p, armed=False, mirrored=True))
+    assert "Double Click" not in events

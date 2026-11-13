@@ -328,7 +328,7 @@ def _render_active_hud_fragment(engine: GestureInferenceEngine, cfg: Dict[str, A
                 | **Move Cursor** | V-Gesture (Index + Middle up, separated) | Moves OS cursor smoothly |
                 | **Left Click** | From V-Gesture, bend Index finger down | Left mouse click |
                 | **Right Click** | From V-Gesture, bend Middle finger down | Right mouse click |
-                | **Double Click** | Two Fingers Closed (Index + Middle together) | Double left click |
+                | **Double Click** | Two Fingers Closed (Index + Middle together), held still | Double left click |
                 | **Drag & Drop** | Closed Fist | Holds left button while moving |
                 | **Scroll Up / Down** | Thumb-Index Pinch (either hand) + move up/down | Smooth vertical page scroll |
                 | **Volume Up / Down** | Major-hand Thumb-Index Pinch + move left/right | System volume adjustment |
@@ -436,7 +436,7 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
                 | **Move Cursor** | V-Gesture (Index + Middle up, separated) | Moves OS cursor smoothly |
                 | **Left Click** | From V-Gesture, bend Index finger down | Left mouse click |
                 | **Right Click** | From V-Gesture, bend Middle finger down | Right mouse click |
-                | **Double Click** | Two Fingers Closed (Index + Middle together) | Double left click |
+                | **Double Click** | Two Fingers Closed (Index + Middle together), held still | Double left click |
                 | **Drag & Drop** | Closed Fist | Holds left button while moving |
                 | **Scroll Up / Down** | Thumb-Index Pinch (either hand) + move up/down | Smooth vertical page scroll |
                 | **Volume Up / Down** | Major-hand Thumb-Index Pinch + move left/right | System volume adjustment |

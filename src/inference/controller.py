@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+WHEEL_DELTA = 120  # Win32 units per mouse-wheel notch
+
 
 @dataclass
 class ActionResult:
@@ -64,6 +66,18 @@ class OSActionController:
             return ["command" if k == "ctrl" else k for k in keys]
         return keys
 
+    @staticmethod
+    def _scroll_amount(notches: int) -> int:
+        """Convert wheel notches to the unit PyAutoGUI expects on this platform.
+
+        On Windows PyAutoGUI forwards the value straight to ``mouse_event`` where a
+        single wheel notch equals ``WHEEL_DELTA = 120``; on macOS / Linux the value
+        is already interpreted as notches.
+        """
+        if sys.platform == "win32":
+            return int(notches) * WHEEL_DELTA
+        return int(notches)
+
     def describe(self, class_id: int) -> tuple[str, str]:
         spec = self.mapping.get(int(class_id), {"label": "Unknown", "shortcut": "-"})
         return spec.get("label", ""), spec.get("shortcut", "")
@@ -86,7 +100,7 @@ class OSActionController:
                 elif kind == "hotkey":
                     self._pg.hotkey(*self._platform_keys(spec["keys"]))
                 elif kind == "scroll":
-                    self._pg.scroll(int(spec["clicks"]))
+                    self._pg.scroll(self._scroll_amount(int(spec["clicks"])))
                 else:
                     err = f"unknown action type {kind}"
             except Exception as exc:

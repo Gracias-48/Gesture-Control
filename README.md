@@ -46,7 +46,7 @@ Unlike basic frame-by-frame classification systems that suffer from false trigge
 * **Zero-Flicker Inline Base64 Viewport**:
   * Eliminates Streamlit's temporary media file eviction glitch (broken image icon '0') by encoding video frames directly into inline base64 JPEG data URIs.
 * **Multi-Stage Anti-False-Trigger Gate**:
-  * **Motion Gate**: Discards static postures below `motion_threshold = 0.0035` to save compute and eliminate phantom triggers.
+  * **Motion Gate**: Discards dynamic-gesture windows below `motion_threshold = 0.0025` to save compute and eliminate phantom triggers. Static poses (Stop Sign) replace this with a stillness gate (`static_max_speed = 0.0020`) and must be held for 4 consecutive windows (about 1.3 seconds).
   * **Confidence Gate**: Requires softmax probability $\ge 0.50$ (tunable up to 0.98).
   * **Temporal Consistency Gate**: Requires 2 consecutive sliding windows to vote for the same class before firing.
   * **Cooldown Timer**: Enforces a 0.9-second refractory lockout after an action to prevent double-firing.
@@ -69,8 +69,8 @@ flowchart TD
     D --> E{Linear Interpolation & Missing Filter}
     E -->|Missing > 30%| D
     E -->|Valid| F[Motion Gate: Mean Joint Speed]
-    F -->|Speed < 0.0035| G[MONITORING / Idle Gate]
-    F -->|Speed >= 0.0035| H[Dual-Stream Feature Pipeline 131-dim]
+    F -->|Speed < 0.0025, dynamic class| G[MONITORING / Idle Gate]
+    F -->|Speed >= 0.0025 or static Stop pose| H[Dual-Stream Feature Pipeline 131-dim]
     H --> I[ONNX Runtime CPU Inference Session]
     I --> J[8-Class Softmax Vector]
     J --> K{Post-Processing Decision Gate}
@@ -89,9 +89,9 @@ The system trains on an 8-class subset of the academic **20BN-Jester** dataset, 
 
 | Class ID | Gesture Name | Visual Hand Action | OS Injected Shortcut | Practical Use Case |
 |:---:|:---|:---|:---:|:---|
-| **2** | **Scroll Up** | Index and middle fingers point up, waving upward | `Mouse Scroll (+5)` | Document / Web page scroll up |
-| **3** | **Scroll Down** | Index and middle fingers point down, waving downward | `Mouse Scroll (-5)` | Document / Web page scroll down |
-| **6** | **Stop Sign** | Open palm held upright and stationary facing camera | `Space` | Play / Pause video (YouTube / Media player) |
+| **2** | **Scroll Up** | Index and middle fingers point up, waving upward | `Mouse Scroll (+5 notches)` | Document / Web page scroll up |
+| **3** | **Scroll Down** | Index and middle fingers point down, waving downward | `Mouse Scroll (-5 notches)` | Document / Web page scroll down |
+| **6** | **Stop Sign** | Open palm held upright and stationary facing camera (about 1.3 s) | `Space` | Play / Pause video (YouTube / Media player) |
 | **7** | **Background** | Resting hand, typing, micro-tremors, random motion | `None (Idle)` | Anti-false-trigger neutral state |
 
 ### Virtual Mouse Gestures (30 FPS Static & Pinch Controls)
@@ -101,7 +101,7 @@ The system trains on an 8-class subset of the academic **20BN-Jester** dataset, 
 | **V-Gesture** | Index + Middle fingers extended and separated | Smooth cursor movement |
 | **Bend Index** | From V-Gesture, bend Index finger down | Left mouse click |
 | **Bend Middle** | From V-Gesture, bend Middle finger down | Right mouse click |
-| **Two Fingers Closed** | Index + Middle extended and touching | Double left click |
+| **Two Fingers Closed** | Index + Middle extended and touching, held still briefly (sliding is reserved for AI scroll) | Double left click |
 | **Closed Fist** | All fingers folded into palm | Drag and drop (hold left button) |
 | **Thumb-Index Pinch (Vertical)** | Thumb tip and Index tip touching (either hand) + move up/down | Scroll up / Scroll down |
 | **Thumb-Index Pinch (Horizontal)** | Major-hand Thumb tip and Index tip touching + move left/right | System volume down / up |

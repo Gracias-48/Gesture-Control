@@ -203,8 +203,11 @@ postprocessing:
   confidence_threshold: 0.50
   consecutive_windows: 2
   cooldown_s: 0.9               # valid range 0.8 – 1.0 s
-  motion_threshold: 0.0035      # mean joint speed (image-height units / frame)
+  motion_threshold: 0.0025      # mean joint speed (image-height units / frame)
   motion_window: 32             # frames used by the motion gate
+  static_class_ids: [6]         # static poses (Stop) use a stillness gate instead of the motion gate
+  static_consecutive_windows: 4 # static poses must be held longer (~1.3 s) before firing
+  static_max_speed: 0.0020      # static poses only fire while the hand is actually held still
   require_release: true         # same class cannot re-fire until prediction changes
   hand_absent_reset_s: 1.0      # clear buffer if no hand for > 1 s
   max_missing_ratio: 0.30       # skip inference if > 30 % of window is interpolated
@@ -220,8 +223,8 @@ actions:
   mapping:
     0: {type: none,                         label: "Disabled",       shortcut: "None"}
     1: {type: none,                         label: "Disabled",       shortcut: "None"}
-    2: {type: scroll, clicks: 5,            label: "Scroll Up",      shortcut: "scroll(+5)"}
-    3: {type: scroll, clicks: -5,           label: "Scroll Down",    shortcut: "scroll(-5)"}
+    2: {type: scroll, clicks: 5,            label: "Scroll Up",      shortcut: "scroll(+5 notches)"}
+    3: {type: scroll, clicks: -5,           label: "Scroll Down",    shortcut: "scroll(-5 notches)"}
     4: {type: none,                         label: "Disabled",       shortcut: "None"}
     5: {type: none,                         label: "Disabled",       shortcut: "None"}
     6: {type: key,    keys: ["space"],      label: "Play / Pause",   shortcut: "Space"}

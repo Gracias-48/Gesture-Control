@@ -94,6 +94,9 @@ class HandRecog:
         self.frame_count: int = 0
         self.hand_result: Optional[np.ndarray] = None
         self.hand_label: int = int(hand_label)
+        # Pinch thresholds as a fraction of hand size (enter / stay-in hysteresis)
+        self.pinch_enter_ratio: float = 0.25
+        self.pinch_hold_ratio: float = 0.35
 
     def update_hand_result(
         self,
@@ -156,6 +159,36 @@ class HandRecog:
         if palm_width > 1e-6 and (thumb_span / palm_width) > 1.25:
             self.finger |= int(Gest.THUMB)
 
+    def hand_scale(self) -> float:
+        """Hand size in normalized units (wrist-to-middle-MCP or palm width, whichever is larger)."""
+        if self.hand_result is None:
+            return 0.0
+        return max(self.get_dist([0, 9]), self.get_dist([5, 17]))
+
+    def is_pinching(self, holding: bool = False) -> bool:
+        """Thumb-tip / Index-tip pinch, invariant to hand distance from the camera.
+
+        * ``pinch_dist / hand_scale`` must be small (looser threshold while a pinch
+          is already active so the gesture does not flicker during movement).
+        * Anatomical fist rejection: in a fist (or an index-bend click) the index tip is
+          tucked back toward the wrist (closer than its PIP knuckle) AND the thumb rests
+          on the index middle phalanx (landmark 7 closer to the thumb than the tip 8).
+          A real pinch fails at least one of those two conditions.
+        """
+        if self.hand_result is None:
+            return False
+        scale = self.hand_scale()
+        if scale <= 1e-6:
+            return False
+        d_tip = self.get_dist([4, 8])
+        ratio = d_tip / scale
+        limit = self.pinch_hold_ratio if holding else self.pinch_enter_ratio
+        if ratio >= limit:
+            return False
+        index_tucked = self.get_dist([8, 0]) < 0.85 * self.get_dist([6, 0])
+        thumb_on_phalanx = d_tip > self.get_dist([4, 7])
+        return not (index_tucked and thumb_on_phalanx)
+
     def get_gesture(self) -> int:
         """Classify current gesture with temporal debounce."""
         if self.hand_result is None:
@@ -168,13 +201,8 @@ class HandRecog:
         fingers_only = self.finger & int(Gest.LAST4)
         current_gesture = self.finger
 
-        # Pinch detection: Thumb tip (4) close to Index tip (8)
-        pinch_dist = self.get_dist([8, 4])
-        index_not_tucked_in_fist = float(self.hand_result[8][1]) <= float(self.hand_result[5][1]) + 0.05
-        if (
-            (fingers_only in (int(Gest.LAST3), int(Gest.LAST4)) and pinch_dist < 0.075)
-            or (pinch_dist < 0.055 and index_not_tucked_in_fist)
-        ):
+        pinch_active = self.ori_gesture in (int(Gest.PINCH_MAJOR), int(Gest.PINCH_MINOR))
+        if self.is_pinching(holding=pinch_active):
             current_gesture = (
                 int(Gest.PINCH_MAJOR) if self.hand_label == HLabel.MAJOR else int(Gest.PINCH_MINOR)
             )
@@ -253,6 +281,12 @@ class VirtualMouseController:
         self.pinch_threshold: float = 0.14
         self.last_volume_time: float = 0.0
 
+        # Double Click must be a still hold (separates it from AI two-finger slide scroll)
+        self.dclick_anchor: Optional[tuple[float, float]] = None
+        self.dclick_frames: int = 0
+        self.dclick_hold_frames: int = 5
+        self.dclick_max_drift: float = 0.03
+
         self._pg = None
         self.available: bool = False
         self._load_backend()
@@ -320,6 +354,11 @@ class VirtualMouseController:
         self.framecount = 0
         self.pinchdirectionflag = None
 
+    def _pinch_reanchor(self, lm_norm: np.ndarray, mirrored: bool) -> None:
+        """Reset BOTH pinch anchors after a step so off-axis drift never accumulates."""
+        self.pinchstartxcoord = (1.0 - float(lm_norm[8][0])) if mirrored else float(lm_norm[8][0])
+        self.pinchstartycoord = float(lm_norm[8][1])
+
     def _get_pinch_lv(self, lm_norm: np.ndarray, mirrored: bool, vertical: bool) -> float:
         if vertical:
             ry = float(lm_norm[8][1])
@@ -361,6 +400,9 @@ class VirtualMouseController:
             self.pinchmajorflag = False
         if gesture != int(Gest.PINCH_MINOR):
             self.pinchminorflag = False
+        if gesture != int(Gest.TWO_FINGER_CLOSED):
+            self.dclick_anchor = None
+            self.dclick_frames = 0
 
         event_msg: Optional[str] = None
 
@@ -395,10 +437,22 @@ class VirtualMouseController:
                     self._pg.click(button="right")
 
             elif gesture == int(Gest.TWO_FINGER_CLOSED) and self.flag:
-                self.flag = False
-                event_msg = "Double Click"
-                if armed and self.available and self._pg is not None:
-                    self._pg.doubleClick()
+                # Hybrid-mode safety: two closed fingers is also the AI "Sliding Two Fingers"
+                # scroll gesture. Only treat it as Double Click when it is held still.
+                anchor = (float(lm_norm[9][0]), float(lm_norm[9][1]))
+                if self.dclick_anchor is None:
+                    self.dclick_anchor = anchor
+                    self.dclick_frames = 0
+                self.dclick_frames += 1
+                drift = math.hypot(anchor[0] - self.dclick_anchor[0], anchor[1] - self.dclick_anchor[1])
+                if drift > self.dclick_max_drift:
+                    # Hand is sliding -> AI scroll gesture, never double click in this hold
+                    self.flag = False
+                elif self.dclick_frames >= self.dclick_hold_frames:
+                    self.flag = False
+                    event_msg = "Double Click"
+                    if armed and self.available and self._pg is not None:
+                        self._pg.doubleClick()
 
             elif gesture in (int(Gest.PINCH_MINOR), int(Gest.PINCH_MAJOR)):
                 if gesture == int(Gest.PINCH_MINOR):
@@ -414,8 +468,19 @@ class VirtualMouseController:
                 lv_y = self._get_pinch_lv(lm_norm, mirrored, vertical=True)
                 now = time.perf_counter()
 
-                # Vertical pinch movement on EITHER hand scrolls up / down
-                if abs(lv_y) >= abs(lv_x) and abs(lv_y) > self.pinch_threshold:
+                # Axis lock per pinch session (pinchdirectionflag: True = vertical scroll,
+                # False = horizontal volume). Minor hand only ever scrolls, so sideways hand
+                # drift can never stall scrolling or flip it into volume control.
+                if self.pinchdirectionflag is None:
+                    if gesture == int(Gest.PINCH_MINOR):
+                        if abs(lv_y) > self.pinch_threshold:
+                            self.pinchdirectionflag = True
+                    elif abs(lv_y) > self.pinch_threshold and abs(lv_y) >= abs(lv_x):
+                        self.pinchdirectionflag = True
+                    elif abs(lv_x) > self.pinch_threshold * 1.3 and abs(lv_x) > abs(lv_y):
+                        self.pinchdirectionflag = False
+
+                if self.pinchdirectionflag is True and abs(lv_y) > self.pinch_threshold:
                     if now - self.last_volume_time > 0.08:
                         self.last_volume_time = now
                         step = int(max(80, min(280, abs(lv_y) * 200)))
@@ -423,16 +488,15 @@ class VirtualMouseController:
                         event_msg = "Scroll Up" if lv_y > 0 else "Scroll Down"
                         if armed and self.available and self._pg is not None:
                             self._pg.scroll(clicks)
-                        self.pinchstartycoord = float(lm_norm[8][1])
-                elif gesture == int(Gest.PINCH_MAJOR) and abs(lv_x) > self.pinch_threshold * 1.3:
+                        self._pinch_reanchor(lm_norm, mirrored)
+                elif self.pinchdirectionflag is False and abs(lv_x) > self.pinch_threshold * 1.3:
                     if now - self.last_volume_time > 0.18:
                         self.last_volume_time = now
                         key = "volumeup" if lv_x > 0 else "volumedown"
                         event_msg = "Volume Up" if lv_x > 0 else "Volume Down"
                         if armed and self.available and self._pg is not None:
                             self._pg.press(key)
-                        rx = (1.0 - float(lm_norm[8][0])) if mirrored else float(lm_norm[8][0])
-                        self.pinchstartxcoord = rx
+                        self._pinch_reanchor(lm_norm, mirrored)
 
             else:
                 # PALM or other neutral posture

@@ -206,7 +206,7 @@ def draw_hud_hand_overlay(
 
     # Bottom-Right Corner Bracket
     cv2.line(frame, (x_max, y_max), (x_max - bracket_len, y_max), accent_color, thk, cv2.LINE_AA)
-    cv2.line(frame, (x_max, y_max), (x_max - bracket_len, y_max), accent_color, thk, cv2.LINE_AA)
+    cv2.line(frame, (x_max, y_max), (x_max, y_max - bracket_len), accent_color, thk, cv2.LINE_AA)
 
     # 6. Directional Motion Badge Directly Above Hand Hitbox
     if "SCROLL UP" in motion_state:

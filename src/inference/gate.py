@@ -39,13 +39,21 @@ class GateConfig:
     motion_threshold: float = 0.006
     require_release: bool = True
     triggered_display_s: float = 0.35
+    # Static poses (e.g. Stop sign) are stationary by definition, so they bypass the
+    # motion gate but must be held for more consecutive windows instead.
+    static_ids: tuple = ()
+    static_consecutive_windows: int = 4
+    static_max_speed: float = 0.0020  # static poses must actually be held still
 
     @classmethod
     def from_cfg(cls, cfg: dict) -> "GateConfig":
         pp = cfg["postprocessing"]
         return cls(float(pp["confidence_threshold"]), int(pp["consecutive_windows"]),
                    float(pp["cooldown_s"]), float(pp["motion_threshold"]),
-                   bool(pp["require_release"]), float(pp["triggered_display_s"]))
+                   bool(pp["require_release"]), float(pp["triggered_display_s"]),
+                   tuple(int(x) for x in pp.get("static_class_ids", [])),
+                   int(pp.get("static_consecutive_windows", 4)),
+                   float(pp.get("static_max_speed", 0.0020)))
 
 
 @dataclass
@@ -72,7 +80,7 @@ class PostProcessGate:
         self.cfg = config
         self.background_id = background_id
         self.disabled_ids: set[int] = set(disabled_ids) if disabled_ids else set()
-        self.history: deque = deque(maxlen=config.consecutive_windows)
+        self.history: deque = deque(maxlen=self._history_len())
         self.last_trigger_t = -np.inf
         self.last_fired_class: Optional[int] = None
         self.last_decision: Optional[GateDecision] = None
@@ -86,7 +94,19 @@ class PostProcessGate:
 
     def set_consecutive(self, n: int) -> None:
         self.cfg.consecutive_windows = int(n)
-        self.history = deque(self.history, maxlen=int(n))
+        self.history = deque(self.history, maxlen=self._history_len())
+
+    def _history_len(self) -> int:
+        n = int(self.cfg.consecutive_windows)
+        if self.cfg.static_ids:
+            n = max(n, int(self.cfg.static_consecutive_windows))
+        return max(n, 1)
+
+    def required_windows(self, class_id: Optional[int]) -> int:
+        """Consecutive windows needed before ``class_id`` may fire."""
+        if class_id is not None and class_id in self.cfg.static_ids:
+            return int(self.cfg.static_consecutive_windows)
+        return int(self.cfg.consecutive_windows)
 
     def reset(self) -> None:
         """Clear temporal-consistency history (e.g. buffer reset or model hot-swap)."""
@@ -97,7 +117,13 @@ class PostProcessGate:
     def cooldown_remaining(self, now: float) -> float:
         return max(0.0, self.cfg.cooldown_s - (now - self.last_trigger_t))
 
-    def update(self, probs: Optional[np.ndarray], motion_ok: bool, now: float) -> GateDecision:
+    def update(
+        self,
+        probs: Optional[np.ndarray],
+        motion_ok: bool,
+        now: float,
+        motion_speed: Optional[float] = None,
+    ) -> GateDecision:
         cd = self.cooldown_remaining(now)
         pred, conf = None, 0.0
         if probs is not None:
@@ -113,7 +139,15 @@ class PostProcessGate:
 
         not_bg = pred is not None and pred != self.background_id and pred not in self.disabled_ids
         conf_ok = not_bg and conf >= self.cfg.confidence_threshold
-        raw_candidate = pred if (conf_ok and motion_ok) else None
+        # Static poses (Stop) are stationary by design -> they replace the motion gate
+        # with a stillness gate (hand must be held still, not moving through the pose)
+        is_static = pred is not None and pred in self.cfg.static_ids
+        if is_static:
+            motion_pass = motion_speed is None or motion_speed <= self.cfg.static_max_speed
+        else:
+            motion_pass = bool(motion_ok)
+        raw_candidate = pred if (conf_ok and motion_pass) else None
+        required = self.required_windows(pred)
 
         # Release rule (evaluated on the raw candidate, independent of cooldown)
         if self.last_fired_class is not None and raw_candidate != self.last_fired_class:
@@ -131,10 +165,10 @@ class PostProcessGate:
                 consistency += 1
 
         checks = {
-            "motion": bool(motion_ok),
+            "motion": motion_pass,
             "not_background": bool(not_bg),
             "confidence": bool(conf_ok),
-            "consistency": consistency >= self.cfg.consecutive_windows,
+            "consistency": consistency >= required,
             "cooldown": cd == 0.0,
             "released": bool(released),
         }
@@ -144,14 +178,14 @@ class PostProcessGate:
             reason = "TRIGGERED"
         elif cd > 0.0:
             reason = f"BLOCKED: Cooldown ({cd:.1f}s)"
-        elif not motion_ok:
-            reason = "BLOCKED: Motion Below Threshold"
+        elif not motion_pass:
+            reason = "BLOCKED: Hold Still" if is_static else "BLOCKED: Motion Below Threshold"
         elif pred == self.background_id:
             reason = "MONITORING: Background Gesture"
         elif not conf_ok:
             reason = f"BLOCKED: Low Confidence ({conf*100:.1f}% < {self.cfg.confidence_threshold*100:.0f}%)"
-        elif consistency < self.cfg.consecutive_windows:
-            reason = f"MONITORING: Consistency ({consistency}/{self.cfg.consecutive_windows})"
+        elif consistency < required:
+            reason = f"MONITORING: Consistency ({consistency}/{required})"
         elif not released:
             reason = "BLOCKED: Gesture Not Released"
         else:
@@ -161,7 +195,7 @@ class PostProcessGate:
             self.last_trigger_t = now
             self.last_fired_class = raw_candidate
             self.history.clear()
-        decision = GateDecision(fire, pred, conf, consistency, bool(motion_ok),
+        decision = GateDecision(fire, pred, conf, consistency, motion_pass,
                                 self.cooldown_remaining(now), checks, reason)
         self.last_decision = decision
         return decision

@@ -173,74 +173,82 @@ class GestureInferenceEngine:
         self.load_model(self.active_model_name)
 
     def load_model(self, model_name: str) -> bool:
-        """Hot-swap model ONNX (bilstm, stgcn, tcn) tanpa mematikan thread kamera."""
+        """Hot-swap model ONNX (bilstm, stgcn, tcn) tanpa mematikan thread kamera.
+
+        Session, pipeline, dan metadata dibangun di luar lock, lalu ditukar secara
+        atomik di dalam lock sehingga thread inferensi tidak pernah melihat kombinasi
+        session/pipeline yang tidak cocok (mis. TCN session + ST-GCN graph features).
+        """
+        model_name = model_name.lower()
+        onnx_dir = resolve_path(self.cfg, "onnx_dir")
+        onnx_path = onnx_dir / f"{model_name}.onnx"
+        meta_path = onnx_dir / f"{model_name}.json"
+        scaler_path = onnx_dir / f"{model_name}_scaler.npz"
+
+        if not onnx_path.exists():
+            print(f"[Engine] File model {onnx_path} belum ditemukan. Harap ekspor model terlebih dahulu.")
+            return False
+
+        try:
+            # Load metadata sidecar jika ada
+            if meta_path.exists():
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {
+                    "model": model_name,
+                    "display_name": model_name.upper(),
+                    "kind": "sequence" if model_name in ("bilstm", "tcn") else "graph",
+                    "use_global": True,
+                    "class_names": self.class_names_list,
+                }
+
+            # Load Scaler
+            if scaler_path.exists():
+                scaler = Scaler.load(scaler_path)
+            else:
+                # fallback ke global scaler_stats.npz
+                g_scaler_path = resolve_path(self.cfg, "scaler_stats")
+                if g_scaler_path.exists():
+                    scaler = Scaler.load(g_scaler_path)
+                else:
+                    scaler = Scaler.identity()
+
+            kind = metadata.get("kind", "sequence" if model_name in ("bilstm", "tcn") else "graph")
+            use_global = bool(metadata.get("use_global", True))
+            pipeline = FeaturePipeline(
+                kind=kind,
+                scaler=scaler,
+                use_global=use_global,
+                eps=float(self.cfg["features"]["eps"]),
+            )
+
+            # Siapkan ONNX session
+            opts = ort.SessionOptions()
+            threads = int(self.cfg["inference"].get("onnx_intra_op_threads", 2))
+            opts.intra_op_num_threads = threads
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            session = ort.InferenceSession(
+                str(onnx_path),
+                sess_options=opts,
+                providers=["CPUExecutionProvider"],
+            )
+        except Exception as e:
+            print(f"[Engine] Gagal memuat model {model_name}: {e}")
+            return False
+
         with self._lock:
-            model_name = model_name.lower()
-            onnx_dir = resolve_path(self.cfg, "onnx_dir")
-            onnx_path = onnx_dir / f"{model_name}.onnx"
-            meta_path = onnx_dir / f"{model_name}.json"
-            scaler_path = onnx_dir / f"{model_name}_scaler.npz"
-
-            if not onnx_path.exists():
-                print(f"[Engine] File model {onnx_path} belum ditemukan. Harap ekspor model terlebih dahulu.")
-                return False
-
-            try:
-                # Load metadata sidecar jika ada
-                if meta_path.exists():
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        self.model_metadata = json.load(f)
-                else:
-                    self.model_metadata = {
-                        "model": model_name,
-                        "display_name": model_name.upper(),
-                        "kind": "sequence" if model_name in ("bilstm", "tcn") else "graph",
-                        "use_global": True,
-                        "class_names": self.class_names_list,
-                    }
-
-                # Load Scaler
-                if scaler_path.exists():
-                    scaler = Scaler.load(scaler_path)
-                else:
-                    # fallback ke global scaler_stats.npz
-                    g_scaler_path = resolve_path(self.cfg, "scaler_stats")
-                    if g_scaler_path.exists():
-                        scaler = Scaler.load(g_scaler_path)
-                    else:
-                        scaler = Scaler.identity()
-
-                kind = self.model_metadata.get("kind", "sequence" if model_name in ("bilstm", "tcn") else "graph")
-                use_global = bool(self.model_metadata.get("use_global", True))
-                self.pipeline = FeaturePipeline(
-                    kind=kind,
-                    scaler=scaler,
-                    use_global=use_global,
-                    eps=float(self.cfg["features"]["eps"]),
-                )
-
-                # Siapkan ONNX session
-                opts = ort.SessionOptions()
-                threads = int(self.cfg["inference"].get("onnx_intra_op_threads", 2))
-                opts.intra_op_num_threads = threads
-                opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                self.onnx_session = ort.InferenceSession(
-                    str(onnx_path),
-                    sess_options=opts,
-                    providers=["CPUExecutionProvider"],
-                )
-
-                self.active_model_name = model_name
-                self.telemetry.active_model = self.model_metadata.get("display_name", model_name.upper())
-                if self.gate:
-                    self.gate.reset()
-                self.raw_landmark_buffer.clear()
-                self.frames_since_last_infer = 0
-                print(f"[Engine] Berhasil memuat model: {model_name.upper()} ({kind})")
-                return True
-            except Exception as e:
-                print(f"[Engine] Gagal memuat model {model_name}: {e}")
-                return False
+            self.model_metadata = metadata
+            self.pipeline = pipeline
+            self.onnx_session = session
+            self.active_model_name = model_name
+            self.telemetry.active_model = metadata.get("display_name", model_name.upper())
+            if self.gate:
+                self.gate.reset()
+            self.raw_landmark_buffer.clear()
+            self.frames_since_last_infer = 0
+        print(f"[Engine] Berhasil memuat model: {model_name.upper()} ({kind})")
+        return True
 
     def start(self) -> None:
         """Mulai pipeline inferensi real-time."""
@@ -485,11 +493,13 @@ class GestureInferenceEngine:
                     cand_label = vm_gesture_name
 
                 if self.overlay_style == "classic":
-                    overlay_label = (
-                        vm_gesture_name
-                        if (self.control_mode in ("hybrid", "virtual_mouse") and lm_norm is not None)
-                        else cand_label
-                    )
+                    if self.control_mode == "hybrid" and lm_norm is not None:
+                        # Show both the Virtual Mouse pose and the AI temporal candidate
+                        overlay_label = vm_gesture_name + (f" | AI: {cand_label}" if cand_label else "")
+                    elif self.control_mode == "virtual_mouse" and lm_norm is not None:
+                        overlay_label = vm_gesture_name
+                    else:
+                        overlay_label = cand_label
                     draw_classic_mediapipe_overlay(
                         display_frame,
                         lm_norm,
@@ -557,21 +567,29 @@ class GestureInferenceEngine:
 
                     if buf_len == self.buffer_size and self.frames_since_last_infer >= self.stride:
                         self.frames_since_last_infer = 0
-                        buf_array = np.array(self.raw_landmark_buffer, dtype=np.float32)
+                        # Snapshot buffer + model pair atomically (safe against hot-swap)
+                        with self._lock:
+                            buf_array = np.array(self.raw_landmark_buffer, dtype=np.float32)
+                            session = self.onnx_session
+                            pipeline = self.pipeline
 
-                        filled_seq, missing_ratio = interpolate_missing(buf_array)
+                        filled_seq, missing_ratio = (
+                            interpolate_missing(buf_array)
+                            if buf_array.shape[0] == self.buffer_size
+                            else (None, 1.0)
+                        )
 
                         if filled_seq is not None and missing_ratio <= self.max_missing_ratio:
                             motion_speed = mean_joint_speed(filled_seq)
                             motion_ok = motion_speed >= self.gate.cfg.motion_threshold
 
-                            if self.onnx_session is not None and self.pipeline is not None:
+                            if session is not None and pipeline is not None:
                                 t_infer_start = time.perf_counter()
-                                x_feat = self.pipeline(filled_seq)
+                                x_feat = pipeline(filled_seq)
                                 x_feat = np.expand_dims(x_feat, axis=0)
 
-                                input_name = self.onnx_session.get_inputs()[0].name
-                                outputs = self.onnx_session.run(None, {input_name: x_feat})
+                                input_name = session.get_inputs()[0].name
+                                outputs = session.run(None, {input_name: x_feat})
                                 probs = np.array(outputs[0][0], dtype=np.float32, copy=True)
                                 if self.disabled_class_ids:
                                     for did in self.disabled_class_ids:
@@ -584,7 +602,9 @@ class GestureInferenceEngine:
                                 pred_idx = int(np.argmax(probs))
                                 pred_conf = float(probs[pred_idx])
 
-                            decision: GateDecision = self.gate.update(probs, motion_ok, now)
+                            decision: GateDecision = self.gate.update(probs, motion_ok, now, motion_speed=motion_speed)
+                            # Static poses (Stop) bypass the motion gate -> reflect that in the HUD
+                            motion_ok = decision.motion_ok
 
                             if decision.fire and decision.class_id is not None:
                                 action_res = self.os_controller.execute(decision.class_id)
