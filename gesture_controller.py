@@ -100,7 +100,7 @@ def main() -> None:
             _, lm_norm = tracker.process(frame)
             h, w = frame.shape[:2]
 
-            hand_recog.update_hand_result(lm_norm)
+            hand_recog.update_hand_result(lm_norm, hand_label=tracker.last_hand_label)
             gesture = hand_recog.get_gesture()
             gesture_label = gesture_to_label(gesture)
             action_event = vm_controller.handle_controls(

@@ -63,9 +63,15 @@ class GateDecision:
 class PostProcessGate:
     """Stateful decision gate; call :meth:`update` once per inference window."""
 
-    def __init__(self, config: GateConfig, background_id: int = 7):
+    def __init__(
+        self,
+        config: GateConfig,
+        background_id: int = 7,
+        disabled_ids: Optional[set[int]] = None,
+    ):
         self.cfg = config
         self.background_id = background_id
+        self.disabled_ids: set[int] = set(disabled_ids) if disabled_ids else set()
         self.history: deque = deque(maxlen=config.consecutive_windows)
         self.last_trigger_t = -np.inf
         self.last_fired_class: Optional[int] = None
@@ -95,9 +101,17 @@ class PostProcessGate:
         cd = self.cooldown_remaining(now)
         pred, conf = None, 0.0
         if probs is not None:
-            pred, conf = int(np.argmax(probs)), float(np.max(probs))
+            filtered = np.array(probs, dtype=np.float32, copy=True)
+            if self.disabled_ids:
+                for did in self.disabled_ids:
+                    if 0 <= did < len(filtered):
+                        filtered[did] = 0.0
+                total = float(np.sum(filtered))
+                if total > 0.0:
+                    filtered /= total
+            pred, conf = int(np.argmax(filtered)), float(np.max(filtered))
 
-        not_bg = pred is not None and pred != self.background_id
+        not_bg = pred is not None and pred != self.background_id and pred not in self.disabled_ids
         conf_ok = not_bg and conf >= self.cfg.confidence_threshold
         raw_candidate = pred if (conf_ok and motion_ok) else None
 

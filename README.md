@@ -42,7 +42,7 @@ Unlike basic frame-by-frame classification systems that suffer from false trigge
   * Global Stream (5-dim): Wrist translation in camera frame and planar velocities.
 * **Modern HUD Hand Hitbox and Directional Tracking**:
   * Computes a dynamic bounding box with 20px padding around landmarks.
-  * Overlays sleek corner brackets and floating directional indicators (`<< SWIPE LEFT`, `SWIPE RIGHT >>`, `STAY / HOLD`).
+  * Overlays sleek corner brackets and floating vertical scroll indicators (`<< SCROLL UP`, `SCROLL DOWN >>`, `STAY / HOLD`).
 * **Zero-Flicker Inline Base64 Viewport**:
   * Eliminates Streamlit's temporary media file eviction glitch (broken image icon '0') by encoding video frames directly into inline base64 JPEG data URIs.
 * **Multi-Stage Anti-False-Trigger Gate**:
@@ -85,16 +85,12 @@ flowchart TD
 
 ## Gesture Control Mapping
 
-The system classifies continuous hand movements into an 8-class subset of the academic **20BN-Jester** dataset, mapped directly to operating system commands:
+The system trains on an 8-class subset of the academic **20BN-Jester** dataset, with Swipe Left/Right and Zoom In/Out disabled during live inference so vertical scrolling and Virtual Mouse actions work without interference:
 
 | Class ID | Gesture Name | Visual Hand Action | OS Injected Shortcut | Practical Use Case |
 |:---:|:---|:---|:---:|:---|
-| **0** | **Swipe Left** | Open palm sweeps firmly from right to left | `Left Arrow` | Previous presentation slide / Photo back |
-| **1** | **Swipe Right** | Open palm sweeps firmly from left to right | `Right Arrow` | Next presentation slide / Photo forward |
 | **2** | **Scroll Up** | Index and middle fingers point up, waving upward | `Mouse Scroll (+5)` | Document / Web page scroll up |
 | **3** | **Scroll Down** | Index and middle fingers point down, waving downward | `Mouse Scroll (-5)` | Document / Web page scroll down |
-| **4** | **Zoom In** | All five fingers expand outward radially | `Ctrl` + `+` | Image viewer / Map zoom in |
-| **5** | **Zoom Out** | All fingers pinch inward toward palm center | `Ctrl` + `-` | Image viewer / Map zoom out |
 | **6** | **Stop Sign** | Open palm held upright and stationary facing camera | `Space` | Play / Pause video (YouTube / Media player) |
 | **7** | **Background** | Resting hand, typing, micro-tremors, random motion | `None (Idle)` | Anti-false-trigger neutral state |
 
@@ -107,7 +103,8 @@ The system classifies continuous hand movements into an 8-class subset of the ac
 | **Bend Middle** | From V-Gesture, bend Middle finger down | Right mouse click |
 | **Two Fingers Closed** | Index + Middle extended and touching | Double left click |
 | **Closed Fist** | All fingers folded into palm | Drag and drop (hold left button) |
-| **Thumb-Index Pinch** | Thumb tip and Index tip touching | Volume, scroll, or brightness scrub |
+| **Thumb-Index Pinch (Vertical)** | Thumb tip and Index tip touching (either hand) + move up/down | Scroll up / Scroll down |
+| **Thumb-Index Pinch (Horizontal)** | Major-hand Thumb tip and Index tip touching + move left/right | System volume down / up |
 | **Open Palm** | All five fingers extended | Neutral / release active click or drag |
 
 ---

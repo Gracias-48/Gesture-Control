@@ -48,6 +48,7 @@ classes:
     "No gesture": 7
     "Doing other things": 7
   background_id: 7
+  disabled_ids: [0, 1, 4, 5]              # Swipe Left/Right and Zoom In/Out disabled
   background_sources: ["No gesture", "Doing other things"]
   background_samples_per_source: 3000     # ~6.000 Background clips in total
   flip_swap_pairs: [[0, 1]]               # horizontal flip: Swipe Left <-> Swipe Right
@@ -215,14 +216,14 @@ postprocessing:
 # -----------------------------------------------------------------------------
 actions:
   failsafe: true                # move mouse to a screen corner to abort PyAutoGUI
-  start_armed: false            # OS control starts DISABLED for safety
+  start_armed: true             # OS control armed by default (use corner failsafe or sidebar to disarm)
   mapping:
-    0: {type: key,    keys: ["left"],       label: "Previous Slide", shortcut: "Left Arrow"}
-    1: {type: key,    keys: ["right"],      label: "Next Slide",     shortcut: "Right Arrow"}
+    0: {type: none,                         label: "Disabled",       shortcut: "None"}
+    1: {type: none,                         label: "Disabled",       shortcut: "None"}
     2: {type: scroll, clicks: 5,            label: "Scroll Up",      shortcut: "scroll(+5)"}
     3: {type: scroll, clicks: -5,           label: "Scroll Down",    shortcut: "scroll(-5)"}
-    4: {type: hotkey, keys: ["ctrl", "+"],  label: "Zoom In",        shortcut: "Ctrl + +"}
-    5: {type: hotkey, keys: ["ctrl", "-"],  label: "Zoom Out",       shortcut: "Ctrl + -"}
+    4: {type: none,                         label: "Disabled",       shortcut: "None"}
+    5: {type: none,                         label: "Disabled",       shortcut: "None"}
     6: {type: key,    keys: ["space"],      label: "Play / Pause",   shortcut: "Space"}
     7: {type: none,                         label: "Idle",           shortcut: "None"}
 

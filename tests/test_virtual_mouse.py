@@ -219,3 +219,58 @@ def test_engine_start_fails_fast_when_camera_unavailable(monkeypatch):
     assert engine.telemetry.error_message == engine.last_error
 
 
+def test_pinch_minor_and_major_vertical_scroll():
+    import time
+
+    recog_minor = HandRecog(hand_label=HLabel.MINOR)
+    pinch = _make_base_palm()
+    pinch[3] = [0.39, 0.45, 0.0]
+    pinch[4] = [0.41, 0.40, 0.0]
+    pinch[7] = [0.41, 0.41, 0.0]
+    pinch[8] = [0.412, 0.402, 0.0]
+    assert _stabilize_gesture(recog_minor, pinch) == Gest.PINCH_MINOR
+
+    ctrl = VirtualMouseController(failsafe=True)
+    for pinch_gest in (Gest.PINCH_MINOR, Gest.PINCH_MAJOR):
+        # Reset pinch anchor with PALM first
+        ctrl.handle_controls(Gest.PALM, pinch, armed=False, mirrored=True)
+        # First frame anchors pinch start coordinates
+        assert ctrl.handle_controls(pinch_gest, pinch, armed=False, mirrored=True) is None
+
+        # Move pinched hand upward (y decreases) -> Scroll Up
+        pinch_up = pinch.copy()
+        pinch_up[8, 1] -= 0.04
+        time.sleep(0.09)
+        assert ctrl.handle_controls(pinch_gest, pinch_up, armed=False, mirrored=True) == "Scroll Up"
+
+        # Move pinched hand downward (y increases) -> Scroll Down
+        pinch_down = pinch_up.copy()
+        pinch_down[8, 1] += 0.08
+        time.sleep(0.09)
+        assert ctrl.handle_controls(pinch_gest, pinch_down, armed=False, mirrored=True) == "Scroll Down"
+
+
+def test_disabled_classes_masked_in_gate():
+    from src.inference.gate import GateConfig, PostProcessGate
+
+    cfg = GateConfig(confidence_threshold=0.50, consecutive_windows=2, cooldown_s=0.5)
+    gate = PostProcessGate(cfg, background_id=7, disabled_ids={0, 1, 4, 5})
+
+    # Disabled classes (0: Swipe Left, 1: Swipe Right, 4: Zoom In, 5: Zoom Out) never fire
+    for disabled_id in (0, 1, 4, 5):
+        probs = np.zeros(8, dtype=np.float32)
+        probs[disabled_id] = 0.99
+        probs[7] = 0.01
+        d1 = gate.update(probs, motion_ok=True, now=1.0 + disabled_id)
+        d2 = gate.update(probs, motion_ok=True, now=1.1 + disabled_id)
+        assert not d1.fire and not d2.fire
+
+    # Active class 2 (Scroll Up) still fires normally after 2 windows
+    probs_scroll = np.zeros(8, dtype=np.float32)
+    probs_scroll[2] = 0.92
+    probs_scroll[7] = 0.08
+    assert not gate.update(probs_scroll, motion_ok=True, now=10.0).fire
+    assert gate.update(probs_scroll, motion_ok=True, now=10.1).fire
+
+
+

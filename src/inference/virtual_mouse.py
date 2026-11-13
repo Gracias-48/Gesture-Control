@@ -55,8 +55,8 @@ GESTURE_LABELS: dict[int, str] = {
     Gest.MID: "LEFT CLICK",
     Gest.INDEX: "RIGHT CLICK",
     Gest.TWO_FINGER_CLOSED: "DOUBLE CLICK",
-    Gest.PINCH_MAJOR: "PINCH: VOLUME / ZOOM",
-    Gest.PINCH_MINOR: "PINCH: SCROLL",
+    Gest.PINCH_MAJOR: "PINCH: SCROLL / VOLUME",
+    Gest.PINCH_MINOR: "PINCH: SCROLL UP/DOWN",
 }
 
 
@@ -169,7 +169,12 @@ class HandRecog:
         current_gesture = self.finger
 
         # Pinch detection: Thumb tip (4) close to Index tip (8)
-        if fingers_only in (int(Gest.LAST3), int(Gest.LAST4)) and self.get_dist([8, 4]) < 0.055:
+        pinch_dist = self.get_dist([8, 4])
+        index_not_tucked_in_fist = float(self.hand_result[8][1]) <= float(self.hand_result[5][1]) + 0.05
+        if (
+            (fingers_only in (int(Gest.LAST3), int(Gest.LAST4)) and pinch_dist < 0.075)
+            or (pinch_dist < 0.055 and index_not_tucked_in_fist)
+        ):
             current_gesture = (
                 int(Gest.PINCH_MAJOR) if self.hand_label == HLabel.MAJOR else int(Gest.PINCH_MINOR)
             )
@@ -200,8 +205,15 @@ class HandRecog:
 
         self.prev_gesture = current_gesture
 
-        # Fast transition for single/double clicks when V-gesture already armed; 4-frame debounce otherwise
-        debounce = 2 if current_gesture in (int(Gest.MID), int(Gest.INDEX), int(Gest.TWO_FINGER_CLOSED)) else 4
+        # Fast transition for clicks & pinch scrolling; 4-frame debounce otherwise
+        fast_gestures = (
+            int(Gest.MID),
+            int(Gest.INDEX),
+            int(Gest.TWO_FINGER_CLOSED),
+            int(Gest.PINCH_MAJOR),
+            int(Gest.PINCH_MINOR),
+        )
+        debounce = 2 if current_gesture in fast_gestures else 4
         if self.frame_count >= debounce:
             self.ori_gesture = current_gesture
 
@@ -238,7 +250,7 @@ class VirtualMouseController:
         self.prevpinchlv: float = 0.0
         self.pinchlv: float = 0.0
         self.framecount: int = 0
-        self.pinch_threshold: float = 0.3
+        self.pinch_threshold: float = 0.14
         self.last_volume_time: float = 0.0
 
         self._pg = None
@@ -311,9 +323,9 @@ class VirtualMouseController:
     def _get_pinch_lv(self, lm_norm: np.ndarray, mirrored: bool, vertical: bool) -> float:
         if vertical:
             ry = float(lm_norm[8][1])
-            return round((self.pinchstartycoord - ry) * 10.0, 1)
+            return float((self.pinchstartycoord - ry) * 10.0)
         rx = (1.0 - float(lm_norm[8][0])) if mirrored else float(lm_norm[8][0])
-        return round((rx - self.pinchstartxcoord) * 10.0, 1)
+        return float((rx - self.pinchstartxcoord) * 10.0)
 
     def _release_grab_if_needed(self, armed: bool) -> Optional[str]:
         if self.grabflag:
@@ -388,45 +400,39 @@ class VirtualMouseController:
                 if armed and self.available and self._pg is not None:
                     self._pg.doubleClick()
 
-            elif gesture == int(Gest.PINCH_MAJOR):
-                if not self.pinchmajorflag:
-                    self._pinch_init(lm_norm, mirrored)
-                    self.pinchmajorflag = True
+            elif gesture in (int(Gest.PINCH_MINOR), int(Gest.PINCH_MAJOR)):
+                if gesture == int(Gest.PINCH_MINOR):
+                    if not self.pinchminorflag:
+                        self._pinch_init(lm_norm, mirrored)
+                        self.pinchminorflag = True
+                else:
+                    if not self.pinchmajorflag:
+                        self._pinch_init(lm_norm, mirrored)
+                        self.pinchmajorflag = True
+
                 lv_x = self._get_pinch_lv(lm_norm, mirrored, vertical=False)
                 lv_y = self._get_pinch_lv(lm_norm, mirrored, vertical=True)
-                if abs(lv_y) > abs(lv_x) and abs(lv_y) > self.pinch_threshold:
-                    now = time.perf_counter()
-                    if now - self.last_volume_time > 0.18:
-                        self.last_volume_time = now
-                        key = "volumeup" if lv_y > 0 else "volumedown"
-                        event_msg = "Volume Up" if lv_y > 0 else "Volume Down"
-                        if armed and self.available and self._pg is not None:
-                            self._pg.press(key)
-                        self.pinchstartycoord = float(lm_norm[8][1])
-                elif abs(lv_x) > self.pinch_threshold:
-                    now = time.perf_counter()
-                    if now - self.last_volume_time > 0.25:
-                        self.last_volume_time = now
-                        event_msg = "Scroll" if lv_x > 0 else "Scroll Back"
-                        if armed and self.available and self._pg is not None:
-                            self._pg.scroll(120 if lv_x > 0 else -120)
-                        rx = (1.0 - float(lm_norm[8][0])) if mirrored else float(lm_norm[8][0])
-                        self.pinchstartxcoord = rx
+                now = time.perf_counter()
 
-            elif gesture == int(Gest.PINCH_MINOR):
-                if not self.pinchminorflag:
-                    self._pinch_init(lm_norm, mirrored)
-                    self.pinchminorflag = True
-                lv_y = self._get_pinch_lv(lm_norm, mirrored, vertical=True)
-                if abs(lv_y) > self.pinch_threshold:
-                    now = time.perf_counter()
-                    if now - self.last_volume_time > 0.12:
+                # Vertical pinch movement on EITHER hand scrolls up / down
+                if abs(lv_y) >= abs(lv_x) and abs(lv_y) > self.pinch_threshold:
+                    if now - self.last_volume_time > 0.08:
                         self.last_volume_time = now
-                        clicks = 120 if lv_y > 0 else -120
+                        step = int(max(80, min(280, abs(lv_y) * 200)))
+                        clicks = step if lv_y > 0 else -step
                         event_msg = "Scroll Up" if lv_y > 0 else "Scroll Down"
                         if armed and self.available and self._pg is not None:
                             self._pg.scroll(clicks)
                         self.pinchstartycoord = float(lm_norm[8][1])
+                elif gesture == int(Gest.PINCH_MAJOR) and abs(lv_x) > self.pinch_threshold * 1.3:
+                    if now - self.last_volume_time > 0.18:
+                        self.last_volume_time = now
+                        key = "volumeup" if lv_x > 0 else "volumedown"
+                        event_msg = "Volume Up" if lv_x > 0 else "Volume Down"
+                        if armed and self.available and self._pg is not None:
+                            self._pg.press(key)
+                        rx = (1.0 - float(lm_norm[8][0])) if mirrored else float(lm_norm[8][0])
+                        self.pinchstartxcoord = rx
 
             else:
                 # PALM or other neutral posture

@@ -59,6 +59,7 @@ class HandTracker:
         # Rolling history of (centroid_x, centroid_y) in display coordinates
         self.pos_history: deque = deque(maxlen=swipe_window)
         self.last_motion_state: str = "WAITING FOR HAND..."
+        self.last_hand_label: int = 1
 
     def process(self, frame_bgr: np.ndarray) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """Processes frame through MediaPipe Hands. Returns (centered_coords, normalized_coords)."""
@@ -70,6 +71,12 @@ class HandTracker:
             self.pos_history.clear()
             self.last_motion_state = "WAITING FOR HAND..."
             return None, None
+        if getattr(res, "multi_handedness", None):
+            try:
+                mp_label = res.multi_handedness[0].classification[0].label
+                self.last_hand_label = 0 if mp_label == "Right" else 1
+            except Exception:
+                self.last_hand_label = 1
         norm = np.array([(p.x, p.y, p.z) for p in res.multi_hand_landmarks[0].landmark], np.float32)
         return to_centered_coords(norm, w, h), norm
 
@@ -80,7 +87,7 @@ class HandTracker:
         frame_h: int,
         mirrored: bool = True,
     ) -> tuple[str, Optional[tuple[int, int, int, int]], float]:
-        """Compute bounding box (with ~20px padding), rolling delta X, and classify motion state."""
+        """Compute bounding box (with ~20px padding), rolling delta Y, and classify motion state."""
         if lm_norm is None:
             self.pos_history.clear()
             self.last_motion_state = "WAITING FOR HAND..."
@@ -106,21 +113,21 @@ class HandTracker:
         cy = float(np.mean(ys))
         self.pos_history.append((cx, cy))
 
-        delta_x = 0.0
+        delta_y = 0.0
         if len(self.pos_history) >= 3:
-            oldest_cx = self.pos_history[0][0]
-            delta_x = cx - oldest_cx
+            oldest_cy = self.pos_history[0][1]
+            delta_y = cy - oldest_cy
 
-        # Classify motion state based on rolling horizontal delta
-        if delta_x < -self.swipe_threshold:
-            state = "<< SWIPE LEFT"
-        elif delta_x > self.swipe_threshold:
-            state = "SWIPE RIGHT >>"
+        # Classify vertical scroll motion state
+        if delta_y < -self.swipe_threshold:
+            state = "<< SCROLL UP"
+        elif delta_y > self.swipe_threshold:
+            state = "SCROLL DOWN >>"
         else:
             state = "STAY / HOLD"
 
         self.last_motion_state = state
-        return state, bbox, delta_x
+        return state, bbox, delta_y
 
     def close(self) -> None:
         self._hands.close()
@@ -202,10 +209,10 @@ def draw_hud_hand_overlay(
     cv2.line(frame, (x_max, y_max), (x_max - bracket_len, y_max), accent_color, thk, cv2.LINE_AA)
 
     # 6. Directional Motion Badge Directly Above Hand Hitbox
-    if "SWIPE LEFT" in motion_state:
+    if "SCROLL UP" in motion_state:
         state_color = CYAN
         badge_border = CYAN
-    elif "SWIPE RIGHT" in motion_state:
+    elif "SCROLL DOWN" in motion_state:
         state_color = GREEN
         badge_border = GREEN
     elif "STAY" in motion_state:

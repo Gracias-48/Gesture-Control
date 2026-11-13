@@ -330,8 +330,8 @@ def _render_active_hud_fragment(engine: GestureInferenceEngine, cfg: Dict[str, A
                 | **Right Click** | From V-Gesture, bend Middle finger down | Right mouse click |
                 | **Double Click** | Two Fingers Closed (Index + Middle together) | Double left click |
                 | **Drag & Drop** | Closed Fist | Holds left button while moving |
-                | **Scroll & Brightness** | Minor-hand Thumb-Index Pinch | Vertical/Horizontal scroll & brightness |
-                | **Volume & Brightness** | Major-hand Thumb-Index Pinch | System volume / brightness scrub |
+                | **Scroll Up / Down** | Thumb-Index Pinch (either hand) + move up/down | Smooth vertical page scroll |
+                | **Volume Up / Down** | Major-hand Thumb-Index Pinch + move left/right | System volume adjustment |
                 | **Neutral / Release** | Open Palm (all fingers extended) | Releases active click/drag state |
                 """
             )
@@ -353,6 +353,7 @@ def _render_active_hud_fragment(engine: GestureInferenceEngine, cfg: Dict[str, A
                 class_names=tele.class_names,
                 probs=tele.probabilities,
                 threshold=tele.confidence_threshold,
+                disabled_ids=tuple(sorted(engine.disabled_class_ids)),
             ),
             unsafe_allow_html=True,
         )
@@ -437,8 +438,8 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
                 | **Right Click** | From V-Gesture, bend Middle finger down | Right mouse click |
                 | **Double Click** | Two Fingers Closed (Index + Middle together) | Double left click |
                 | **Drag & Drop** | Closed Fist | Holds left button while moving |
-                | **Scroll & Brightness** | Minor-hand Thumb-Index Pinch | Vertical/Horizontal scroll & brightness |
-                | **Volume & Brightness** | Major-hand Thumb-Index Pinch | System volume / brightness scrub |
+                | **Scroll Up / Down** | Thumb-Index Pinch (either hand) + move up/down | Smooth vertical page scroll |
+                | **Volume Up / Down** | Major-hand Thumb-Index Pinch + move left/right | System volume adjustment |
                 | **Neutral / Release** | Open Palm (all fingers extended) | Releases active click/drag state |
                 """
             )
@@ -477,7 +478,12 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         unsafe_allow_html=True,
     )
     conf_placeholder.markdown(
-        render_confidence_bars(tele.class_names, np.zeros(len(tele.class_names)), tele.confidence_threshold),
+        render_confidence_bars(
+            tele.class_names,
+            np.zeros(len(tele.class_names)),
+            tele.confidence_threshold,
+            disabled_ids=tuple(sorted(engine.disabled_class_ids)),
+        ),
         unsafe_allow_html=True,
     )
     log_placeholder.markdown(render_action_log(tele.action_history), unsafe_allow_html=True)

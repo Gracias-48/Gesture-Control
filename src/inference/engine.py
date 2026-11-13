@@ -117,6 +117,9 @@ class GestureInferenceEngine:
         self.model_metadata: Dict[str, Any] = {}
         self.pipeline: Optional[FeaturePipeline] = None
         self.class_names_list: List[str] = list(self.cfg["classes"]["names"])
+        self.disabled_class_ids: set[int] = set(
+            int(x) for x in self.cfg["classes"].get("disabled_ids", [0, 1, 4, 5])
+        )
 
         # Buffers dan Pelacak Status
         self.raw_landmark_buffer: collections.deque = collections.deque(maxlen=self.buffer_size)
@@ -144,7 +147,11 @@ class GestureInferenceEngine:
         from src.inference.gate import GateConfig
 
         gate_cfg = GateConfig.from_cfg(self.cfg)
-        self.gate = PostProcessGate(gate_cfg, background_id=int(self.cfg["classes"]["background_id"]))
+        self.gate = PostProcessGate(
+            gate_cfg,
+            background_id=int(self.cfg["classes"]["background_id"]),
+            disabled_ids=self.disabled_class_ids,
+        )
 
         act_cfg = self.cfg.get("actions", {})
         self.os_controller = OSActionController(
@@ -152,6 +159,7 @@ class GestureInferenceEngine:
             failsafe=bool(act_cfg.get("failsafe", True)),
             armed=bool(act_cfg.get("start_armed", False)),
         )
+        self.telemetry.os_armed = self.os_controller.armed
         self.hand_recog = HandRecog(hand_label=HLabel.MAJOR)
         self.vm_controller = VirtualMouseController(
             failsafe=bool(act_cfg.get("failsafe", True)),
@@ -408,7 +416,7 @@ class GestureInferenceEngine:
                 cursor_pos = self.vm_controller.last_cursor_pos if self.vm_controller else None
                 os_armed_now = bool(self.os_controller and self.os_controller.armed)
                 if self.control_mode in ("hybrid", "virtual_mouse") and self.hand_recog and self.vm_controller:
-                    self.hand_recog.update_hand_result(lm_norm)
+                    self.hand_recog.update_hand_result(lm_norm, hand_label=tracker.last_hand_label)
                     vm_gesture = self.hand_recog.get_gesture()
                     vm_gesture_name = gesture_to_label(vm_gesture)
                     vm_event = self.vm_controller.handle_controls(
@@ -463,7 +471,7 @@ class GestureInferenceEngine:
                     accent = "coral"
                 elif current_state == SystemState.COOLDOWN:
                     accent = "amber"
-                elif "SWIPE" in motion_state:
+                elif "SCROLL" in motion_state:
                     accent = "green"
                 else:
                     accent = "cyan"
@@ -564,7 +572,14 @@ class GestureInferenceEngine:
 
                                 input_name = self.onnx_session.get_inputs()[0].name
                                 outputs = self.onnx_session.run(None, {input_name: x_feat})
-                                probs = outputs[0][0]
+                                probs = np.array(outputs[0][0], dtype=np.float32, copy=True)
+                                if self.disabled_class_ids:
+                                    for did in self.disabled_class_ids:
+                                        if 0 <= did < len(probs):
+                                            probs[did] = 0.0
+                                    prob_sum = float(np.sum(probs))
+                                    if prob_sum > 0.0:
+                                        probs /= prob_sum
                                 lat_ms = (time.perf_counter() - t_infer_start) * 1e3
                                 pred_idx = int(np.argmax(probs))
                                 pred_conf = float(probs[pred_idx])

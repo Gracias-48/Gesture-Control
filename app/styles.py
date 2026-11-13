@@ -424,13 +424,22 @@ def render_state_badge(state: str) -> str:
     return clean_html(f'<span class="hud-badge {css_class}">{icon} {st}</span>')
 
 
-def render_confidence_bars(class_names: list, probs: list, threshold: float = 0.80) -> str:
-    """Render horizontal bar chart 8 kelas gestur dengan threshold marker (unindented HTML)."""
+def render_confidence_bars(
+    class_names: list,
+    probs: list,
+    threshold: float = 0.80,
+    disabled_ids: tuple[int, ...] = (0, 1, 4, 5),
+) -> str:
+    """Render horizontal bar chart untuk gestur aktif dengan threshold marker (unindented HTML)."""
     p_list = [float(x) for x in probs] if probs is not None and len(probs) > 0 else []
-    active_idx = p_list.index(max(p_list)) if p_list else -1
+    disabled_set = set(disabled_ids or ())
+    active_candidates = [(i, p_list[i]) for i in range(len(p_list)) if i not in disabled_set]
+    active_idx = max(active_candidates, key=lambda x: x[1])[0] if active_candidates else -1
 
     rows = []
     for i, name in enumerate(class_names):
+        if i in disabled_set:
+            continue
         val = p_list[i] if i < len(p_list) else 0.0
         pct = max(0.0, min(100.0, val * 100.0))
         is_active = (i == active_idx and val >= 0.20)
@@ -452,7 +461,7 @@ def render_confidence_bars(class_names: list, probs: list, threshold: float = 0.
 
     content = (
         f'<div class="conf-container">'
-        f'<div class="hud-section-title">8-Class Softmax Confidence</div>'
+        f'<div class="hud-section-title">Active Gesture Confidence</div>'
         f'{"".join(rows)}'
         f'</div>'
     )
