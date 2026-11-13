@@ -16,6 +16,7 @@ import collections
 import json
 import threading
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -74,6 +75,7 @@ class TelemetryData:
     overlay_style: str = "classic"
     vm_gesture_name: str = "None"
     cursor_pos: Optional[Tuple[int, int]] = None
+    error_message: Optional[str] = None
 
 
 class GestureInferenceEngine:
@@ -106,6 +108,8 @@ class GestureInferenceEngine:
         self.control_mode: str = str(self.cfg["inference"].get("control_mode", "hybrid"))
         self.floating_window_enabled: bool = bool(self.cfg["inference"].get("floating_window", True))
         self.overlay_style: str = str(self.cfg["inference"].get("overlay_style", "classic"))
+        self.camera_index: int = int(self.cfg["inference"].get("camera_index", 0))
+        self.last_error: Optional[str] = None
 
         # Model ONNX & Session
         self.active_model_name: str = self.cfg["inference"].get("default_model", "tcn").lower()
@@ -235,24 +239,63 @@ class GestureInferenceEngine:
         if self.running:
             return
 
+        self.last_error = None
+        self.last_processed_frame = None
+        self.last_processed_seq = -1
+        self.frames_since_last_infer = 0
+        self.raw_landmark_buffer.clear()
+        self.resampler.reset()
+        with self._lock:
+            self.telemetry.error_message = None
+
         cam_cfg = self.cfg["inference"]
         self.camera = CameraStream(
-            index=int(cam_cfg.get("camera_index", 0)),
+            index=self.camera_index,
             width=int(cam_cfg.get("capture_width", 640)),
             height=int(cam_cfg.get("capture_height", 480)),
             fps=int(cam_cfg.get("capture_fps", 30)),
         ).start()
 
+        if self.camera.error:
+            self.last_error = self.camera.error
+            with self._lock:
+                self.telemetry.error_message = self.last_error
+                self.telemetry.state = SystemState.STANDBY
+            self.camera.stop()
+            self.camera = None
+            self.running = False
+            print(f"[Engine] Gagal memulai kamera: {self.last_error}")
+            return
+
+        # Sinkronkan indeks kamera aktual jika CameraStream melakukan fallback (mis. 0 -> 1)
+        self.camera_index = self.camera.index
+
         mp_cfg = cam_cfg.get("mediapipe", {})
-        self.hand_tracker = HandTracker(
-            model_complexity=int(mp_cfg.get("model_complexity", 0)),
-            min_detection_confidence=float(mp_cfg.get("min_detection_confidence", 0.5)),
-            min_tracking_confidence=float(mp_cfg.get("min_tracking_confidence", 0.5)),
-        )
+        try:
+            self.hand_tracker = HandTracker(
+                model_complexity=int(mp_cfg.get("model_complexity", 0)),
+                min_detection_confidence=float(mp_cfg.get("min_detection_confidence", 0.5)),
+                min_tracking_confidence=float(mp_cfg.get("min_tracking_confidence", 0.5)),
+            )
+        except Exception as exc:
+            self.last_error = f"HandTracker init failed: {type(exc).__name__}: {exc}"
+            with self._lock:
+                self.telemetry.error_message = self.last_error
+                self.telemetry.state = SystemState.STANDBY
+            self.camera.stop()
+            self.camera = None
+            self.running = False
+            print(f"[Engine] {self.last_error}")
+            return
 
         self.running = True
         self._worker_thread = threading.Thread(target=self._inference_loop, name="inference-consumer", daemon=True)
         self._worker_thread.start()
+        # Tunggu sebentar agar frame pertama siap sebelum UI rerun
+        for _ in range(16):
+            if self.last_processed_frame is not None or not self.running:
+                break
+            time.sleep(0.05)
         print("[Engine] Real-time inference engine started.")
 
     def stop(self) -> None:
@@ -260,13 +303,17 @@ class GestureInferenceEngine:
         self.running = False
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=1.5)
+        self._worker_thread = None
         if self.camera:
             self.camera.stop()
             self.camera = None
         if self.hand_tracker:
             self.hand_tracker.close()
             self.hand_tracker = None
-        self.telemetry.state = SystemState.STANDBY
+        self.last_processed_frame = None
+        self.last_processed_seq = -1
+        with self._lock:
+            self.telemetry.state = SystemState.STANDBY
         print("[Engine] Real-time inference engine stopped.")
 
     def set_os_control(self, armed: bool) -> None:
@@ -306,6 +353,15 @@ class GestureInferenceEngine:
         with self._lock:
             self.telemetry.overlay_style = style
 
+    def set_camera_index(self, index: int) -> None:
+        idx = int(index)
+        if idx == self.camera_index:
+            return
+        self.camera_index = idx
+        if self.running:
+            self.stop()
+            self.start()
+
     def _inference_loop(self) -> None:
         """Thread consumer yang menjalankan MediaPipe, Virtual Mouse, Floating Screen, dan ONNX."""
         import cv2
@@ -318,11 +374,13 @@ class GestureInferenceEngine:
 
         try:
             while self.running:
-                if not self.camera:
+                cam = self.camera
+                tracker = self.hand_tracker
+                if not cam or not tracker:
                     time.sleep(0.01)
                     continue
 
-                seq, frame, ts = self.camera.read()
+                seq, frame, ts = cam.read()
                 if frame is None or seq == self.last_processed_seq:
                     time.sleep(0.005)
                     continue
@@ -337,7 +395,9 @@ class GestureInferenceEngine:
                     fps_tracker_time = now
 
                 # 1. Deteksi MediaPipe Hands @ ~30 FPS
-                lm_centered, lm_norm = self.hand_tracker.process(frame)
+                lm_centered, lm_norm = tracker.process(frame)
+                if not self.running:
+                    break
                 h, w = frame.shape[:2]
 
                 # Mirror frame terlebih dahulu jika mirror_display aktif
@@ -396,7 +456,7 @@ class GestureInferenceEngine:
                     )
                 )
 
-                motion_state, bbox, _ = self.hand_tracker.update_motion_state(
+                motion_state, bbox, _ = tracker.update_motion_state(
                     lm_norm, w, h, mirrored=self.mirror_display
                 )
                 if current_state == SystemState.TRIGGERED:
@@ -440,16 +500,22 @@ class GestureInferenceEngine:
                         candidate_label=cand_label,
                     )
 
-                # 4. Floating Screen Window ("Gesture Controller") pada thread yang sama
-                if self.floating_window_enabled and self.floating_window is not None:
-                    keep_open = self.floating_window.show(display_frame)
-                    if not keep_open:
-                        self.floating_window_enabled = False
+                # 4. Floating Screen Window ("Gesture Controller") pada thread yang sama (diisolasi agar tidak memblokir HUD)
+                try:
+                    if self.floating_window_enabled and self.floating_window is not None:
+                        keep_open = self.floating_window.show(display_frame)
+                        if not keep_open:
+                            self.floating_window_enabled = False
+                            self.floating_window.close()
+                            with self._lock:
+                                self.telemetry.floating_window = False
+                    elif self.floating_window is not None and self.floating_window.is_open:
                         self.floating_window.close()
-                        with self._lock:
-                            self.telemetry.floating_window = False
-                elif self.floating_window is not None and self.floating_window.is_open:
-                    self.floating_window.close()
+                except Exception as fw_exc:
+                    self.floating_window_enabled = False
+                    print(f"[Engine] Floating window disabled after error: {fw_exc}")
+                    with self._lock:
+                        self.telemetry.floating_window = False
 
                 # 5. Timestamp Downsampling ke 12 FPS untuk Buffer & ONNX AI Gestures
                 probs = self.telemetry.probabilities
@@ -559,9 +625,20 @@ class GestureInferenceEngine:
                     self.telemetry.overlay_style = self.overlay_style
                     self.telemetry.vm_gesture_name = vm_gesture_name
                     self.telemetry.cursor_pos = cursor_pos
+                    self.telemetry.error_message = self.last_error
+        except Exception as exc:
+            traceback.print_exc()
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            self.running = False
+            with self._lock:
+                self.telemetry.error_message = self.last_error
+                self.telemetry.state = SystemState.STANDBY
         finally:
             if self.floating_window is not None:
-                self.floating_window.close()
+                try:
+                    self.floating_window.close()
+                except Exception:
+                    pass
 
     def get_latest_frame_and_telemetry(self) -> Tuple[Optional[np.ndarray], TelemetryData]:
         """Ambil salinan frame terbaru dan telemetri untuk di-render oleh UI Streamlit."""
@@ -597,5 +674,6 @@ class GestureInferenceEngine:
                 overlay_style=self.telemetry.overlay_style,
                 vm_gesture_name=self.telemetry.vm_gesture_name,
                 cursor_pos=self.telemetry.cursor_pos,
+                error_message=self.telemetry.error_message,
             )
             return frame, tele

@@ -500,6 +500,13 @@ class FloatingScreenWindow:
         self.margin_top = margin_top
         self._is_open = False
         self._positioned = False
+        self._frame_count = 0
+        self.last_error: Optional[str] = None
+
+    @property
+    def is_open(self) -> bool:
+        """Whether the native OpenCV floating window is currently open."""
+        return self._is_open
 
     def _apply_win32_topmost_and_pos(self, x: int, y: int) -> None:
         if sys.platform != "win32":
@@ -545,30 +552,39 @@ class FloatingScreenWindow:
                     pass
                 self._is_open = True
                 self._positioned = False
+                self._frame_count = 1
+                self.last_error = None
                 cv2.imshow(self.window_name, frame_bgr)
                 cv2.waitKey(1)
                 self._apply_win32_topmost_and_pos(x, y)
                 self._positioned = True
                 return True
 
+            self._frame_count += 1
             cv2.imshow(self.window_name, frame_bgr)
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 self.close()
                 return False
 
-            # Detect user clicking the native 'X' button
-            try:
-                vis = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE)
-                if vis < 1:
-                    self._is_open = False
-                    self._positioned = False
-                    return False
-            except Exception:
-                pass
+            # Detect user clicking the native 'X' button (after brief Win32 show warmup; -1 means unsupported)
+            if self._frame_count >= 10:
+                try:
+                    vis = cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE)
+                    if 0.0 <= vis < 1.0:
+                        self._is_open = False
+                        self._positioned = False
+                        self._frame_count = 0
+                        return False
+                except Exception:
+                    pass
             return True
-        except Exception:
-            # Headless environment without display server
+        except Exception as exc:
+            # Headless environment or OpenCV GUI error
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            self._is_open = False
+            self._positioned = False
+            self._frame_count = 0
             return False
 
     def close(self) -> None:
@@ -581,3 +597,5 @@ class FloatingScreenWindow:
                 pass
         self._is_open = False
         self._positioned = False
+        self._frame_count = 0
+

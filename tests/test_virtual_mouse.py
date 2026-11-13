@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from src.inference.engine import GestureInferenceEngine
+from src.inference.hand_tracker import HandTracker
 from src.inference.virtual_mouse import (
+    FloatingScreenWindow,
     Gest,
     HLabel,
     HandRecog,
@@ -139,3 +142,80 @@ def test_virtual_mouse_controller_preview_and_overlay():
     assert out.shape == (480, 640, 3)
     assert out.dtype == np.uint8
     assert np.any(out > 0)
+
+
+def test_floating_window_is_open_and_engine_loop_without_floating_window(monkeypatch):
+    import threading
+    import time
+
+    win = FloatingScreenWindow()
+    assert win.is_open is False
+    win.close()
+    assert win.is_open is False
+
+    # Engine with floating window disabled must not crash on missing is_open or hang waiting for frame
+    engine = GestureInferenceEngine()
+    engine.set_floating_window(False)
+
+    class FakeCamera:
+        error = None
+        _seq = 0
+
+        def read(self):
+            self._seq += 1
+            return self._seq, np.zeros((480, 640, 3), dtype=np.uint8), time.perf_counter()
+
+        def stop(self):
+            pass
+
+    engine.camera = FakeCamera()
+    engine.hand_tracker = HandTracker()
+    engine.running = True
+    worker = threading.Thread(target=engine._inference_loop, daemon=True)
+    engine._worker_thread = worker
+    worker.start()
+
+    deadline = time.perf_counter() + 4.0
+    frame = None
+    while time.perf_counter() < deadline:
+        frame, _ = engine.get_latest_frame_and_telemetry()
+        if frame is not None:
+            break
+        time.sleep(0.05)
+
+    assert worker.is_alive()
+    assert engine.last_error is None
+    assert frame is not None and frame.shape == (480, 640, 3)
+
+    engine.stop()
+    assert engine.running is False
+
+
+def test_engine_start_fails_fast_when_camera_unavailable(monkeypatch):
+    from src.inference import camera as cam_mod
+
+    class FailingCamera:
+        def __init__(self, *args, **kwargs):
+            self.index = 0
+            self.error = "Cannot open or read frames from camera (tried indices: 0, 1, 2)"
+
+        def start(self):
+            return self
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(cam_mod, "CameraStream", FailingCamera)
+    # engine module holds direct reference to CameraStream
+    from src.inference import engine as eng_mod
+
+    monkeypatch.setattr(eng_mod, "CameraStream", FailingCamera)
+
+    engine = GestureInferenceEngine()
+    engine.start()
+    assert engine.running is False
+    assert engine.last_error is not None
+    assert "Cannot open" in engine.last_error
+    assert engine.telemetry.error_message == engine.last_error
+
+

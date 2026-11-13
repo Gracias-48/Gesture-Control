@@ -70,13 +70,20 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
     )
 
     st.sidebar.markdown('<div class="hud-section-title">Floating Screen & Control Mode</div>', unsafe_allow_html=True)
+    if "floating_win_cb" not in st.session_state:
+        st.session_state["floating_win_cb"] = engine.floating_window_enabled
+    elif st.session_state.get("_engine_float_last") != engine.floating_window_enabled:
+        st.session_state["floating_win_cb"] = engine.floating_window_enabled
+    st.session_state["_engine_float_last"] = engine.floating_window_enabled
+
     floating_enabled = st.sidebar.checkbox(
         'Pop-Out Floating Window ("Gesture Controller")',
-        value=engine.floating_window_enabled,
+        key="floating_win_cb",
         help="Toggles the native Always-On-Top desktop camera window docked at top-right.",
     )
     if floating_enabled != engine.floating_window_enabled:
         engine.set_floating_window(floating_enabled)
+        st.session_state["_engine_float_last"] = floating_enabled
 
     mode_options = ["hybrid", "virtual_mouse", "ai_gestures"]
     mode_labels = {
@@ -108,6 +115,17 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
     )
     if selected_style != engine.overlay_style:
         engine.set_overlay_style(selected_style)
+
+    cam_options = [0, 1, 2]
+    cam_idx = cam_options.index(engine.camera_index) if engine.camera_index in cam_options else 0
+    selected_cam = st.sidebar.selectbox(
+        "Camera Device Index",
+        options=cam_options,
+        index=cam_idx,
+        help="Select webcam index if default 0 points to a virtual or unavailable camera.",
+    )
+    if selected_cam != engine.camera_index:
+        engine.set_camera_index(selected_cam)
 
     st.sidebar.markdown('<div class="hud-section-title">Model Hot-Swapping</div>', unsafe_allow_html=True)
     models = ["TCN", "BiLSTM", "ST-GCN"]
@@ -175,8 +193,177 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
     )
 
 
+@st.fragment(run_every=0.06)
+def _render_active_hud_fragment(engine: GestureInferenceEngine, cfg: Dict[str, Any]) -> None:
+    """Fragment live streaming ~16 FPS tanpa memicu full-page rerun."""
+    if not engine.running:
+        st.rerun(scope="app")
+        return
+
+    frame_bgr, tele = engine.get_latest_frame_and_telemetry()
+    worker_alive = engine._worker_thread is not None and engine._worker_thread.is_alive()
+    if not worker_alive and engine.last_error:
+        engine.stop()
+        st.rerun(scope="app")
+        return
+
+    col_hdr1, col_hdr2 = st.columns([0.65, 0.35])
+    with col_hdr1:
+        st.markdown(
+            f"""
+            <div class="hud-header">
+                <div class="hud-title">
+                    <span class="dot"></span>
+                    <span>TOUCHLESS GESTURE HUD</span>
+                    <span style="font-size: 0.75rem; color: #9c9c9d; margin-left: 8px;">[Arch: {tele.active_model}]</span>
+                </div>
+                <div id="state-badge-container">
+                    {render_state_badge(tele.state)}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col_hdr2:
+        armed_status = "ARMED (⌘)" if tele.os_armed else "DISARMED"
+        badge_style = "badge-triggered" if tele.os_armed else "badge-standby"
+        st.markdown(
+            f"""
+            <div class="hud-header" style="justify-content: flex-end; gap: 12px;">
+                <span style="font-size: 0.8rem; color: #9c9c9d;">OS Injection:</span>
+                <span class="hud-badge {badge_style}">{armed_status}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    col_view, col_tele = st.columns([0.62, 0.38])
+    with col_view:
+        cam_col1, cam_col2 = st.columns([0.5, 0.5])
+        with cam_col1:
+            if st.button("⏹ Stop Camera Stream", use_container_width=True, key="stop_cam_live"):
+                engine.stop()
+                st.rerun(scope="app")
+        with cam_col2:
+            if st.button("🔄 Reset Buffer & Gate", use_container_width=True, key="reset_gate_live"):
+                if engine.gate:
+                    engine.gate.reset()
+                engine.raw_landmark_buffer.clear()
+
+        frame_html = ""
+        if frame_bgr is not None and isinstance(frame_bgr, np.ndarray) and frame_bgr.size > 0:
+            frame_html = render_camera_frame(frame_bgr)
+
+        if frame_html:
+            st.markdown(frame_html, unsafe_allow_html=True)
+        else:
+            cam_err = engine.camera.error if engine.camera is not None else None
+            err_msg = engine.last_error or tele.error_message or cam_err
+            hint = err_msg or "Menginisialisasi kamera & MediaPipe Hands (pastikan tidak dipakai aplikasi lain)."
+            st.markdown(
+                f"""
+                <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 360px; display: flex; align-items: center; justify-content: center; color: #9c9c9d; text-align: center; padding: 20px;">
+                    <div>
+                        <div style="font-size: 1.5rem; margin-bottom: 8px;">📷</div>
+                        <div style="font-weight: 600;">Menunggu frame kamera...</div>
+                        <div style="font-size: 0.8rem; color: #6a6b6c; margin-top: 4px;">{hint}</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        if tele.toast_message:
+            st.markdown(
+                f"""
+                <div style="text-align: center; margin-top: -60px; margin-bottom: 20px; position: relative; z-index: 10;">
+                    <div class="toast-pill">
+                        <span>⚡</span>
+                        <span>{tele.toast_message}</span>
+                        <span class="shortcut">Triggered</span>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        cand_idx = tele.predicted_class if tele.predicted_class is not None else int(cfg["classes"]["background_id"])
+        cand_name = tele.class_names[cand_idx] if cand_idx < len(tele.class_names) else "Unknown"
+        st.markdown(
+            render_diagnostic_bar(
+                candidate_name=cand_name,
+                candidate_conf=tele.predicted_confidence,
+                motion_passed=tele.motion_gate_passed,
+                motion_speed=tele.motion_speed,
+                motion_threshold=float(cfg["postprocessing"]["motion_threshold"]),
+                gate_reason=tele.gate_reason,
+                consistency_count=tele.consistency_count,
+                consistency_target=tele.consistency_target,
+            ),
+            unsafe_allow_html=True,
+        )
+
+        cursor_str = f"({tele.cursor_pos[0]}, {tele.cursor_pos[1]})" if tele.cursor_pos else "--"
+        win_badge = "FLOATING ON" if tele.floating_window else "FLOATING OFF"
+        vm_html = (
+            '<div style="display:flex; justify-content:space-between; align-items:center; '
+            'padding:8px 12px; margin-top:6px; background:#141718; border:1px solid #242728; '
+            'border-radius:6px; font-family:monospace; font-size:0.78rem; color:#d4d4d4;">'
+            f'<span><b>Mode:</b> {tele.control_mode}</span>'
+            f'<span><b>Virtual Mouse:</b> {tele.vm_gesture_name}</span>'
+            f'<span><b>Cursor:</b> {cursor_str}</span>'
+            f'<span><b>Window:</b> {win_badge}</span>'
+            '</div>'
+        )
+        st.markdown(vm_html, unsafe_allow_html=True)
+
+        st.markdown('<div class="hud-section-title" style="margin-top: 14px;">Recent Command Triggers</div>', unsafe_allow_html=True)
+        st.markdown(render_action_log(tele.action_history), unsafe_allow_html=True)
+
+        with st.expander("Virtual Mouse Gesture Guide (Viral-Doshi)", expanded=False):
+            st.markdown(
+                """
+                | Gesture | Hand Pose | OS Action |
+                | :--- | :--- | :--- |
+                | **Move Cursor** | V-Gesture (Index + Middle up, separated) | Moves OS cursor smoothly |
+                | **Left Click** | From V-Gesture, bend Index finger down | Left mouse click |
+                | **Right Click** | From V-Gesture, bend Middle finger down | Right mouse click |
+                | **Double Click** | Two Fingers Closed (Index + Middle together) | Double left click |
+                | **Drag & Drop** | Closed Fist | Holds left button while moving |
+                | **Scroll & Brightness** | Minor-hand Thumb-Index Pinch | Vertical/Horizontal scroll & brightness |
+                | **Volume & Brightness** | Major-hand Thumb-Index Pinch | System volume / brightness scrub |
+                | **Neutral / Release** | Open Palm (all fingers extended) | Releases active click/drag state |
+                """
+            )
+
+    with col_tele:
+        st.markdown(
+            render_telemetry_cards(
+                fps=tele.fps,
+                latency_ms=tele.inference_latency_ms,
+                buffer_fill=tele.buffer_fill,
+                buffer_max=tele.buffer_max,
+                cooldown_s=tele.cooldown_remaining,
+                os_armed=tele.os_armed,
+            ),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            render_confidence_bars(
+                class_names=tele.class_names,
+                probs=tele.probabilities,
+                threshold=tele.confidence_threshold,
+            ),
+            unsafe_allow_html=True,
+        )
+
+
 def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
     """Tab 1: Live Webcam Viewport, Skeletal Overlay, dan Real-time Telemetry HUD."""
+    if engine.running:
+        _render_active_hud_fragment(engine, cfg)
+        return
+
     # Top Header Command Bar
     col_hdr1, col_hdr2 = st.columns([0.65, 0.35])
     with col_hdr1:
@@ -208,6 +395,11 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
             unsafe_allow_html=True,
         )
 
+    if engine.last_error:
+        st.error(
+            f"Camera / Engine Error: {engine.last_error} — Select another Camera Device Index in the sidebar or close apps using the webcam."
+        )
+
     # Main Grid (Left 62% Viewport, Right 38% Telemetry)
     col_view, col_tele = st.columns([0.62, 0.38])
 
@@ -215,16 +407,11 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         # Kontrol Kamera Play/Pause
         cam_col1, cam_col2 = st.columns([0.5, 0.5])
         with cam_col1:
-            if not engine.running:
-                if st.button("▶ Start Camera Stream", use_container_width=True):
-                    engine.start()
-                    st.rerun()
-            else:
-                if st.button("⏹ Stop Camera Stream", use_container_width=True):
-                    engine.stop()
-                    st.rerun()
+            if st.button("▶ Start Camera Stream", use_container_width=True, key="start_cam_idle"):
+                engine.start()
+                st.rerun()
         with cam_col2:
-            if st.button("🔄 Reset Buffer & Gate", use_container_width=True):
+            if st.button("🔄 Reset Buffer & Gate", use_container_width=True, key="reset_gate_idle"):
                 if engine.gate:
                     engine.gate.reset()
                 engine.raw_landmark_buffer.clear()
@@ -232,11 +419,9 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
 
         # Viewport Video Frame Placeholder
         frame_placeholder = st.empty()
-        toast_placeholder = st.empty()
 
         # Live Diagnostic Bar tepat di bawah viewport kamera
         diagnostic_placeholder = st.empty()
-        vm_status_placeholder = st.empty()
 
         # Riwayat Log Aksi OS
         st.markdown('<div class="hud-section-title" style="margin-top: 14px;">Recent Command Triggers</div>', unsafe_allow_html=True)
@@ -262,145 +447,40 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         telemetry_placeholder = st.empty()
         conf_placeholder = st.empty()
 
-    # Loop refresh telemetri & frame
-    if engine.running:
-        for _ in range(30):  # Stream 30 update cycles per render (~1.8 detik per batch sebelum rerun)
-            frame_bgr, tele = engine.get_latest_frame_and_telemetry()
-
-            # Render frame sebagai JPEG base64 inline (st.image + st.rerun() memicu broken-image)
-            frame_html = ""
-            if frame_bgr is not None and isinstance(frame_bgr, np.ndarray) and frame_bgr.size > 0:
-                frame_html = render_camera_frame(frame_bgr)
-
-            if frame_html:
-                frame_placeholder.markdown(frame_html, unsafe_allow_html=True)
-            else:
-                cam_err = engine.camera.error if engine.camera is not None else None
-                hint = cam_err or "Pastikan webcam terhubung dan tidak dipakai aplikasi lain."
-                frame_placeholder.markdown(
-                    f"""
-                    <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 360px; display: flex; align-items: center; justify-content: center; color: #9c9c9d; text-align: center; padding: 20px;">
-                        <div>
-                            <div style="font-size: 1.5rem; margin-bottom: 8px;">📷</div>
-                            <div style="font-weight: 600;">Menunggu frame kamera...</div>
-                            <div style="font-size: 0.8rem; color: #6a6b6c; margin-top: 4px;">{hint}</div>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-            # Floating Toast Pill saat gestur dieksekusi
-            if tele.toast_message:
-                toast_placeholder.markdown(
-                    f"""
-                    <div style="text-align: center; margin-top: -60px; margin-bottom: 20px; position: relative; z-index: 10;">
-                        <div class="toast-pill">
-                            <span>⚡</span>
-                            <span>{tele.toast_message}</span>
-                            <span class="shortcut">Triggered</span>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            else:
-                toast_placeholder.empty()
-
-            # Mode Diagnostik Live Real-Time
-            cand_idx = tele.predicted_class if tele.predicted_class is not None else int(cfg["classes"]["background_id"])
-            cand_name = tele.class_names[cand_idx] if cand_idx < len(tele.class_names) else "Unknown"
-            diagnostic_placeholder.markdown(
-                render_diagnostic_bar(
-                    candidate_name=cand_name,
-                    candidate_conf=tele.predicted_confidence,
-                    motion_passed=tele.motion_gate_passed,
-                    motion_speed=tele.motion_speed,
-                    motion_threshold=float(cfg["postprocessing"]["motion_threshold"]),
-                    gate_reason=tele.gate_reason,
-                    consistency_count=tele.consistency_count,
-                    consistency_target=tele.consistency_target,
-                ),
-                unsafe_allow_html=True,
-            )
-
-            cursor_str = f"({tele.cursor_pos[0]}, {tele.cursor_pos[1]})" if tele.cursor_pos else "--"
-            win_badge = "FLOATING ON" if tele.floating_window else "FLOATING OFF"
-            vm_html = (
-                '<div style="display:flex; justify-content:space-between; align-items:center; '
-                'padding:8px 12px; margin-top:6px; background:#141718; border:1px solid #242728; '
-                'border-radius:6px; font-family:monospace; font-size:0.78rem; color:#d4d4d4;">'
-                f'<span><b>Mode:</b> {tele.control_mode}</span>'
-                f'<span><b>Virtual Mouse:</b> {tele.vm_gesture_name}</span>'
-                f'<span><b>Cursor:</b> {cursor_str}</span>'
-                f'<span><b>Window:</b> {win_badge}</span>'
-                '</div>'
-            )
-            vm_status_placeholder.markdown(vm_html, unsafe_allow_html=True)
-
-            # Telemetry Cards & 8-Class Softmax Confidence Bars
-            telemetry_placeholder.markdown(
-                render_telemetry_cards(
-                    fps=tele.fps,
-                    latency_ms=tele.inference_latency_ms,
-                    buffer_fill=tele.buffer_fill,
-                    buffer_max=tele.buffer_max,
-                    cooldown_s=tele.cooldown_remaining,
-                    os_armed=tele.os_armed,
-                ),
-                unsafe_allow_html=True,
-            )
-
-            conf_placeholder.markdown(
-                render_confidence_bars(
-                    class_names=tele.class_names,
-                    probs=tele.probabilities,
-                    threshold=tele.confidence_threshold,
-                ),
-                unsafe_allow_html=True,
-            )
-
-            # Riwayat Aksi OS (Unindented HTML)
-            log_placeholder.markdown(render_action_log(tele.action_history), unsafe_allow_html=True)
-
-            time.sleep(0.05)
-
-        st.rerun()
-    else:
-        # Tampilan saat camera OFF / STANDBY
-        frame_placeholder.markdown(
-            """
-            <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 380px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #9c9c9d; gap: 10px;">
-                <div style="font-size: 1.6rem; color: #ff6363;">⚡</div>
-                <div style="font-weight: 600; color: #f9f9f9; font-size: 1.05rem;">Camera Inactive</div>
-                <div style="font-size: 0.8rem; color: #6a6b6c;">Klik "▶ Start Camera Stream" di atas untuk memulai inferensi real-time.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        tele = engine.telemetry
-        diagnostic_placeholder.markdown(
-            render_diagnostic_bar(
-                candidate_name="Standby",
-                candidate_conf=0.0,
-                motion_passed=False,
-                motion_speed=0.0,
-                motion_threshold=float(cfg["postprocessing"]["motion_threshold"]),
-                gate_reason="STANDBY: Camera Off",
-                consistency_count=0,
-                consistency_target=int(cfg["postprocessing"]["consecutive_windows"]),
-            ),
-            unsafe_allow_html=True,
-        )
-        telemetry_placeholder.markdown(
-            render_telemetry_cards(0.0, 0.0, 0, 32, 0.0, tele.os_armed),
-            unsafe_allow_html=True,
-        )
-        conf_placeholder.markdown(
-            render_confidence_bars(tele.class_names, np.zeros(len(tele.class_names)), tele.confidence_threshold),
-            unsafe_allow_html=True,
-        )
-        log_placeholder.markdown(render_action_log(tele.action_history), unsafe_allow_html=True)
+    # Tampilan saat camera OFF / STANDBY
+    frame_placeholder.markdown(
+        """
+        <div style="background: #101111; border: 1px solid #242728; border-radius: 8px; height: 380px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #9c9c9d; gap: 10px;">
+            <div style="font-size: 1.6rem; color: #ff6363;">⚡</div>
+            <div style="font-weight: 600; color: #f9f9f9; font-size: 1.05rem;">Camera Inactive</div>
+            <div style="font-size: 0.8rem; color: #6a6b6c;">Klik "▶ Start Camera Stream" di atas untuk memulai inferensi real-time.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    tele = engine.telemetry
+    diagnostic_placeholder.markdown(
+        render_diagnostic_bar(
+            candidate_name="Standby",
+            candidate_conf=0.0,
+            motion_passed=False,
+            motion_speed=0.0,
+            motion_threshold=float(cfg["postprocessing"]["motion_threshold"]),
+            gate_reason="STANDBY: Camera Off",
+            consistency_count=0,
+            consistency_target=int(cfg["postprocessing"]["consecutive_windows"]),
+        ),
+        unsafe_allow_html=True,
+    )
+    telemetry_placeholder.markdown(
+        render_telemetry_cards(0.0, 0.0, 0, 32, 0.0, tele.os_armed),
+        unsafe_allow_html=True,
+    )
+    conf_placeholder.markdown(
+        render_confidence_bars(tele.class_names, np.zeros(len(tele.class_names)), tele.confidence_threshold),
+        unsafe_allow_html=True,
+    )
+    log_placeholder.markdown(render_action_log(tele.action_history), unsafe_allow_html=True)
 
 
 def render_experiments_tab(cfg: Dict[str, Any]):
