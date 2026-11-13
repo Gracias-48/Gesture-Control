@@ -53,6 +53,9 @@ Unlike basic frame-by-frame classification systems that suffer from false trigge
 * **Fail-Safe OS Action Injection**:
   * Injects keystrokes and scroll events directly into the host OS via PyAutoGUI.
   * Armed-by-default safety toggle with instant emergency abort by pushing the cursor to any screen corner.
+* **Virtual Mouse & Always-On-Top Floating Screen**:
+  * Full 30 FPS Virtual Mouse control (`V-Gesture` cursor tracking, left/right/double click, fist drag-and-drop, and thumb-index pinch volume/scroll/brightness control) modeled after `Viral-Doshi/Gesture-Controlled-Virtual-Mouse`.
+  * Pop-out native Always-On-Top `"Gesture Controller"` desktop window docked at the top-right corner with classic MediaPipe red landmark dots and green skeletal connections, usable either from the Streamlit HUD or standalone via `python gesture_controller.py`.
 
 ---
 
@@ -95,6 +98,18 @@ The system classifies continuous hand movements into an 8-class subset of the ac
 | **6** | **Stop Sign** | Open palm held upright and stationary facing camera | `Space` | Play / Pause video (YouTube / Media player) |
 | **7** | **Background** | Resting hand, typing, micro-tremors, random motion | `None (Idle)` | Anti-false-trigger neutral state |
 
+### Virtual Mouse Gestures (30 FPS Static & Pinch Controls)
+
+| Gesture | Hand Pose | OS Action |
+|:---|:---|:---|
+| **V-Gesture** | Index + Middle fingers extended and separated | Smooth cursor movement |
+| **Bend Index** | From V-Gesture, bend Index finger down | Left mouse click |
+| **Bend Middle** | From V-Gesture, bend Middle finger down | Right mouse click |
+| **Two Fingers Closed** | Index + Middle extended and touching | Double left click |
+| **Closed Fist** | All fingers folded into palm | Drag and drop (hold left button) |
+| **Thumb-Index Pinch** | Thumb tip and Index tip touching | Volume, scroll, or brightness scrub |
+| **Open Palm** | All five fingers extended | Neutral / release active click or drag |
+
 ---
 
 ## Deep Learning Architectures and Benchmarks
@@ -135,6 +150,7 @@ Gesture-Control/
 │   ├── main.py                     # Streamlit Real-Time HUD & Evaluation Dashboard
 │   └── styles.py                   # Cyber Dark design tokens & pure unindented HTML renderers
 ├── config.yaml                     # Single source of truth configuration (paths, gates, models)
+├── gesture_controller.py           # Standalone Always-On-Top "Gesture Controller" desktop launcher
 ├── data/
 │   ├── interim_landmarks/          # Extracted per-clip landmark .npy sequences & index.csv
 │   └── processed_landmarks/T32/    # Stratified train/val/test .npz splits & scaler_stats.npz
@@ -154,7 +170,8 @@ Gesture-Control/
 │   │   ├── controller.py           # PyAutoGUI OS action injector with fail-safe corner abort
 │   │   ├── engine.py               # Main pipeline conductor & thread-safe telemetry
 │   │   ├── gate.py                 # Multi-stage anti-false-trigger state machine
-│   │   └── hand_tracker.py         # MediaPipe Hands, corner-bracket hitbox & swipe detector
+│   │   ├── hand_tracker.py         # MediaPipe Hands, corner-bracket hitbox & swipe detector
+│   │   └── virtual_mouse.py        # Virtual Mouse (Gest/HandRecog) & Always-On-Top Floating Screen
 │   ├── models/
 │   │   ├── bilstm.py               # Bidirectional LSTM with Bahdanau attention pooling
 │   │   ├── stgcn.py                # 21-node hand skeleton ST-GCN with edge importance
@@ -166,7 +183,8 @@ Gesture-Control/
 │   └── utils/                      # Seed setup, device auto-detect, path resolver
 └── tests/
     ├── test_app_styles.py          # Base64 data URI camera viewport unit tests
-    └── test_pipeline.py            # Feature dimension & pipeline integrity tests
+    ├── test_pipeline.py            # Feature dimension & pipeline integrity tests
+    └── test_virtual_mouse.py       # Virtual Mouse gesture & overlay unit tests
 ```
 
 ---
@@ -202,8 +220,20 @@ pip install -r requirements.txt
 streamlit run app/main.py
 ```
 * Open your browser at `http://localhost:8501`.
-* Click **Start Camera Stream** to begin live inference.
+* Click **Start Camera Stream** to begin live inference (the Always-On-Top `"Gesture Controller"` floating window opens automatically in `hybrid` mode and can be toggled in the sidebar).
 * *(Optional)* Toggle **Master Arm OS Control** in the sidebar to enable live keyboard/mouse injection into your operating system.
+
+### 3b. Launch the Standalone Floating Screen (`Gesture Controller`)
+Run just the Always-On-Top desktop floating camera window and Virtual Mouse at 30 FPS without Streamlit:
+```bash
+python gesture_controller.py
+
+# Preview mode without dispatching OS mouse/keyboard events:
+python gesture_controller.py --no-os
+
+# Switch skeleton style or camera index:
+python gesture_controller.py --style hud --camera 0
+```
 
 ### 4. Interactive Gesture Data Recorder (CLI)
 Record custom webcam sequences directly for fine-tuning or expanding classes:

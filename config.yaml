@@ -187,6 +187,9 @@ inference:
   default_model: tcn         # bilstm | stgcn | tcn
   onnx_intra_op_threads: 2
   mirror_display: true       # mirror only the displayed frame, never the model input
+  control_mode: "hybrid"     # hybrid | virtual_mouse | ai_gestures
+  floating_window: true      # pop-out Always-On-Top "Gesture Controller" desktop window
+  overlay_style: "classic"   # classic (red dots / green bones) | cyber_hud
   mediapipe:
     model_complexity: 0      # 0 = lite (fast CPU), 1 = full
     min_detection_confidence: 0.5

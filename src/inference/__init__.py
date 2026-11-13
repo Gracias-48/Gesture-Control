@@ -4,6 +4,14 @@ from src.inference.controller import ActionResult, OSActionController
 from src.inference.engine import GestureInferenceEngine, TelemetryData
 from src.inference.gate import GateConfig, GateDecision, PostProcessGate, SystemState
 from src.inference.hand_tracker import HandTracker, draw_skeleton
+from src.inference.virtual_mouse import (
+    FloatingScreenWindow,
+    Gest,
+    HLabel,
+    HandRecog,
+    VirtualMouseController,
+    draw_classic_mediapipe_overlay,
+)
 
 __all__ = [
     "CameraStream",
@@ -18,4 +26,10 @@ __all__ = [
     "draw_skeleton",
     "GestureInferenceEngine",
     "TelemetryData",
+    "FloatingScreenWindow",
+    "Gest",
+    "HLabel",
+    "HandRecog",
+    "VirtualMouseController",
+    "draw_classic_mediapipe_overlay",
 ]

@@ -33,6 +33,14 @@ from src.inference.camera import CameraStream, TimestampResampler
 from src.inference.controller import ActionResult, OSActionController
 from src.inference.gate import GateDecision, PostProcessGate, SystemState
 from src.inference.hand_tracker import HandTracker, draw_hud_hand_overlay, draw_skeleton
+from src.inference.virtual_mouse import (
+    FloatingScreenWindow,
+    HLabel,
+    HandRecog,
+    VirtualMouseController,
+    draw_classic_mediapipe_overlay,
+    gesture_to_label,
+)
 from src.utils.config import load_config, resolve_path
 
 
@@ -61,6 +69,11 @@ class TelemetryData:
     action_history: List[Dict[str, Any]] = field(default_factory=list)
     toast_message: Optional[str] = None
     toast_expiry: float = 0.0
+    control_mode: str = "hybrid"
+    floating_window: bool = True
+    overlay_style: str = "classic"
+    vm_gesture_name: str = "None"
+    cursor_pos: Optional[Tuple[int, int]] = None
 
 
 class GestureInferenceEngine:
@@ -86,6 +99,13 @@ class GestureInferenceEngine:
         self.hand_tracker: Optional[HandTracker] = None
         self.gate: Optional[PostProcessGate] = None
         self.os_controller: Optional[OSActionController] = None
+        self.hand_recog: Optional[HandRecog] = None
+        self.vm_controller: Optional[VirtualMouseController] = None
+        self.floating_window: Optional[FloatingScreenWindow] = None
+
+        self.control_mode: str = str(self.cfg["inference"].get("control_mode", "hybrid"))
+        self.floating_window_enabled: bool = bool(self.cfg["inference"].get("floating_window", True))
+        self.overlay_style: str = str(self.cfg["inference"].get("overlay_style", "classic"))
 
         # Model ONNX & Session
         self.active_model_name: str = self.cfg["inference"].get("default_model", "tcn").lower()
@@ -108,12 +128,15 @@ class GestureInferenceEngine:
             cooldown_target=float(self.cfg["postprocessing"]["cooldown_s"]),
             confidence_threshold=float(self.cfg["postprocessing"]["confidence_threshold"]),
             consistency_target=int(self.cfg["postprocessing"]["consecutive_windows"]),
+            control_mode=self.control_mode,
+            floating_window=self.floating_window_enabled,
+            overlay_style=self.overlay_style,
         )
 
         self._init_subsystems()
 
     def _init_subsystems(self) -> None:
-        """Inisialisasi komponen gate, os controller, dan model ONNX."""
+        """Inisialisasi komponen gate, os controller, virtual mouse, dan model ONNX."""
         from src.inference.gate import GateConfig
 
         gate_cfg = GateConfig.from_cfg(self.cfg)
@@ -124,6 +147,15 @@ class GestureInferenceEngine:
             mapping=act_cfg.get("mapping", {}),
             failsafe=bool(act_cfg.get("failsafe", True)),
             armed=bool(act_cfg.get("start_armed", False)),
+        )
+        self.hand_recog = HandRecog(hand_label=HLabel.MAJOR)
+        self.vm_controller = VirtualMouseController(
+            failsafe=bool(act_cfg.get("failsafe", True)),
+        )
+        self.floating_window = FloatingScreenWindow(
+            window_name="Gesture Controller",
+            width=440,
+            height=330,
         )
 
         self.load_model(self.active_model_name)
@@ -255,187 +287,281 @@ class GestureInferenceEngine:
             with self._lock:
                 self.telemetry.cooldown_target = cooldown_s
 
+    def set_control_mode(self, mode: str) -> None:
+        if mode not in ("hybrid", "virtual_mouse", "ai_gestures"):
+            return
+        self.control_mode = mode
+        with self._lock:
+            self.telemetry.control_mode = mode
+
+    def set_floating_window(self, enabled: bool) -> None:
+        self.floating_window_enabled = bool(enabled)
+        with self._lock:
+            self.telemetry.floating_window = self.floating_window_enabled
+
+    def set_overlay_style(self, style: str) -> None:
+        if style not in ("classic", "cyber_hud"):
+            return
+        self.overlay_style = style
+        with self._lock:
+            self.telemetry.overlay_style = style
+
     def _inference_loop(self) -> None:
-        """Thread consumer yang menjalankan MediaPipe, Buffer, ONNX, dan Post-Processing Gate."""
+        """Thread consumer yang menjalankan MediaPipe, Virtual Mouse, Floating Screen, dan ONNX."""
         import cv2
 
         fps_tracker_time = time.perf_counter()
         fps_frame_count = 0
         computed_fps = 0.0
+        last_vm_log_event: Optional[str] = None
+        last_vm_log_time = 0.0
 
-        while self.running:
-            if not self.camera:
-                time.sleep(0.01)
-                continue
+        try:
+            while self.running:
+                if not self.camera:
+                    time.sleep(0.01)
+                    continue
 
-            seq, frame, ts = self.camera.read()
-            if frame is None or seq == self.last_processed_seq:
-                time.sleep(0.005)
-                continue
+                seq, frame, ts = self.camera.read()
+                if frame is None or seq == self.last_processed_seq:
+                    time.sleep(0.005)
+                    continue
 
-            self.last_processed_seq = seq
-            now = time.perf_counter()
+                self.last_processed_seq = seq
+                now = time.perf_counter()
 
-            # 1. Timestamp Downsampling ke 12 FPS
-            if not self.resampler.accept(now):
-                continue
+                fps_frame_count += 1
+                if now - fps_tracker_time >= 1.0:
+                    computed_fps = fps_frame_count / (now - fps_tracker_time)
+                    fps_frame_count = 0
+                    fps_tracker_time = now
 
-            fps_frame_count += 1
-            if now - fps_tracker_time >= 1.0:
-                computed_fps = fps_frame_count / (now - fps_tracker_time)
-                fps_frame_count = 0
-                fps_tracker_time = now
+                # 1. Deteksi MediaPipe Hands @ ~30 FPS
+                lm_centered, lm_norm = self.hand_tracker.process(frame)
+                h, w = frame.shape[:2]
 
-            # 2. Deteksi MediaPipe Hands
-            lm_centered, lm_norm = self.hand_tracker.process(frame)
-            h, w = frame.shape[:2]
+                # Mirror frame terlebih dahulu jika mirror_display aktif
+                display_frame = cv2.flip(frame, 1) if self.mirror_display else frame.copy()
 
-            current_state = self.gate.phase(now) if len(self.raw_landmark_buffer) == self.buffer_size else SystemState.BUFFERING
+                # 2. Virtual Mouse (Viral-Doshi) @ 30 FPS penuh
+                vm_gesture_name = "Disabled"
+                cursor_pos = self.vm_controller.last_cursor_pos if self.vm_controller else None
+                os_armed_now = bool(self.os_controller and self.os_controller.armed)
+                if self.control_mode in ("hybrid", "virtual_mouse") and self.hand_recog and self.vm_controller:
+                    self.hand_recog.update_hand_result(lm_norm)
+                    vm_gesture = self.hand_recog.get_gesture()
+                    vm_gesture_name = gesture_to_label(vm_gesture)
+                    vm_event = self.vm_controller.handle_controls(
+                        gesture=vm_gesture,
+                        lm_norm=lm_norm,
+                        armed=os_armed_now,
+                        mirrored=self.mirror_display,
+                    )
+                    cursor_pos = self.vm_controller.last_cursor_pos
+                    if vm_event:
+                        discrete_events = {"Left Click", "Right Click", "Double Click", "Drag Start", "Drag Release"}
+                        should_log = (
+                            vm_event in discrete_events
+                            or vm_event != last_vm_log_event
+                            or (now - last_vm_log_time) >= 0.45
+                        )
+                        if should_log:
+                            last_vm_log_event = vm_event
+                            last_vm_log_time = now
+                            toast_exp = now + float(self.cfg["postprocessing"].get("toast_display_s", 1.2))
+                            with self._lock:
+                                self.telemetry.toast_message = f"{vm_event} (Virtual Mouse)"
+                                self.telemetry.toast_expiry = toast_exp
+                                self.telemetry.action_history.insert(0, {
+                                    "timestamp": time.strftime("%H:%M:%S") + f".{int((now % 1) * 1000):03d}",
+                                    "gesture": f"VM: {vm_gesture_name}",
+                                    "action": vm_event,
+                                    "shortcut": "Mouse/HID",
+                                    "confidence": "100.0%",
+                                    "latency_ms": "0.0ms",
+                                    "executed": os_armed_now,
+                                })
+                                if len(self.telemetry.action_history) > 10:
+                                    self.telemetry.action_history.pop()
 
-            # Hitung motion state (<< SWIPE LEFT, SWIPE RIGHT >>, STAY / HOLD) dan bounding box
-            motion_state, bbox, delta_x = self.hand_tracker.update_motion_state(
-                lm_norm, w, h, mirrored=self.mirror_display
-            )
-
-            # Tentukan warna aksen HUD
-            if current_state == SystemState.TRIGGERED:
-                accent = "coral"
-            elif current_state == SystemState.COOLDOWN:
-                accent = "amber"
-            elif "SWIPE" in motion_state:
-                accent = "green"
-            else:
-                accent = "cyan"
-
-            # Mirror frame terlebih dahulu jika mirror_display aktif
-            display_frame = cv2.flip(frame, 1) if self.mirror_display else frame.copy()
-
-            # Label kandidat gestur untuk badge HUD di atas tangan
-            cand_label = None
-            if self.telemetry.predicted_class is not None and self.telemetry.predicted_class != int(self.cfg["classes"]["background_id"]):
-                cname = self.class_names_list[self.telemetry.predicted_class]
-                cand_label = f"{cname} ({self.telemetry.predicted_confidence * 100:.0f}%)"
-
-            # Render skeletal bones, corner brackets, dan floating motion badge
-            draw_hud_hand_overlay(
-                display_frame,
-                lm_norm,
-                motion_state=motion_state,
-                bbox=bbox,
-                accent=accent,
-                mirrored=self.mirror_display,
-                candidate_label=cand_label,
-            )
-
-            # 3. Pengelolaan Buffer Landmark
-            if lm_centered is not None:
-                self.last_hand_seen_time = now
-                self.raw_landmark_buffer.append(lm_centered)
-            else:
-                # Tangan tidak terdeteksi pada frame ini
-                if now - self.last_hand_seen_time > self.hand_absent_reset_s:
-                    self.raw_landmark_buffer.clear()
-                    self.gate.reset()
-                    current_state = SystemState.STANDBY
-                else:
-                    # Masukkan NaN untuk interpolasi linear berikutnya
-                    self.raw_landmark_buffer.append(np.full((21, 3), np.nan, dtype=np.float32))
-
-            buf_len = len(self.raw_landmark_buffer)
-            self.frames_since_last_infer += 1
-
-            # Tentukan status state machine
-            if buf_len == 0:
-                current_state = SystemState.STANDBY
-            elif buf_len < self.buffer_size:
-                current_state = SystemState.BUFFERING
-            else:
-                current_state = self.gate.phase(now)
-
-            # 4. Inferensi ONNX & Decision Gate setiap `stride` frame saat buffer penuh
-            probs = self.telemetry.probabilities
-            pred_idx = self.telemetry.predicted_class
-            pred_conf = self.telemetry.predicted_confidence
-            lat_ms = self.telemetry.inference_latency_ms
-            motion_speed = self.telemetry.motion_speed
-            motion_ok = self.telemetry.motion_gate_passed
-
-            if buf_len == self.buffer_size and self.frames_since_last_infer >= self.stride:
-                self.frames_since_last_infer = 0
-                buf_array = np.array(self.raw_landmark_buffer, dtype=np.float32)
-
-                # Linear Interpolation untuk frame yang hilang
-                filled_seq, missing_ratio = interpolate_missing(buf_array)
-
-                if filled_seq is not None and missing_ratio <= self.max_missing_ratio:
-                    # Motion Gate Check
-                    motion_speed = mean_joint_speed(filled_seq)
-                    motion_ok = motion_speed >= self.gate.cfg.motion_threshold
-
-                    # SELALU jalankan ONNX jika session dan pipeline tersedia,
-                    # agar raw candidate class dan confidence selalu terdeteksi live
-                    if self.onnx_session is not None and self.pipeline is not None:
-                        t_infer_start = time.perf_counter()
-                        # Normalisasi dua-aliran (Dual-Stream)
-                        x_feat = self.pipeline(filled_seq)
-                        x_feat = np.expand_dims(x_feat, axis=0)  # batch dimension (1, ...)
-
-                        input_name = self.onnx_session.get_inputs()[0].name
-                        outputs = self.onnx_session.run(None, {input_name: x_feat})
-                        probs = outputs[0][0]  # Softmax probability vector 8-class
-                        lat_ms = (time.perf_counter() - t_infer_start) * 1e3
-                        pred_idx = int(np.argmax(probs))
-                        pred_conf = float(probs[pred_idx])
-
-                    # Evaluasi Post-processing Decision Gate
-                    decision: GateDecision = self.gate.update(probs, motion_ok, now)
-
-                    if decision.fire and decision.class_id is not None:
-                        # Eksekusi aksi OS via PyAutoGUI
-                        action_res = self.os_controller.execute(decision.class_id)
-                        current_state = SystemState.TRIGGERED
-                        toast_msg = f"{action_res.label} ({action_res.shortcut})"
-                        toast_exp = now + float(self.cfg["postprocessing"].get("toast_display_s", 1.6))
-
-                        with self._lock:
-                            self.telemetry.last_action = action_res
-                            self.telemetry.toast_message = toast_msg
-                            self.telemetry.toast_expiry = toast_exp
-                            self.telemetry.action_history.insert(0, {
-                                "timestamp": time.strftime("%H:%M:%S") + f".{int((now % 1) * 1000):03d}",
-                                "gesture": self.class_names_list[decision.class_id],
-                                "action": action_res.label,
-                                "shortcut": action_res.shortcut,
-                                "confidence": f"{decision.confidence * 100:.1f}%",
-                                "latency_ms": f"{lat_ms:.1f}ms",
-                                "executed": action_res.executed,
-                            })
-                            if len(self.telemetry.action_history) > 10:
-                                self.telemetry.action_history.pop()
-
-            # 5. Perbarui Snapshot Telemetri Thread-Safe
-            gate_reason_str = (
-                self.gate.last_decision.reason
-                if self.gate.last_decision
-                else ("STANDBY" if buf_len == 0 else ("BUFFERING" if buf_len < self.buffer_size else "MONITORING"))
-            )
-            with self._lock:
-                self.last_processed_frame = display_frame
-                self.telemetry.state = current_state
-                self.telemetry.fps = computed_fps
-                self.telemetry.inference_latency_ms = lat_ms
-                self.telemetry.buffer_fill = buf_len
-                self.telemetry.motion_speed = motion_speed
-                self.telemetry.motion_gate_passed = motion_ok
-                self.telemetry.probabilities = probs
-                self.telemetry.predicted_class = pred_idx
-                self.telemetry.predicted_confidence = pred_conf
-                self.telemetry.gate_reason = gate_reason_str
-                self.telemetry.cooldown_remaining = self.gate.cooldown_remaining(now)
-                self.telemetry.consistency_count = (
-                    self.gate.last_decision.consistency if self.gate.last_decision else 0
+                # 3. Tentukan status temporal AI & render visual skeleton
+                buf_len = len(self.raw_landmark_buffer)
+                current_state = (
+                    self.gate.phase(now)
+                    if (self.control_mode in ("hybrid", "ai_gestures") and buf_len == self.buffer_size)
+                    else (
+                        SystemState.MONITORING
+                        if (self.control_mode == "virtual_mouse" and lm_norm is not None)
+                        else (SystemState.BUFFERING if lm_norm is not None else SystemState.STANDBY)
+                    )
                 )
-                self.telemetry.os_armed = self.os_controller.armed
+
+                motion_state, bbox, _ = self.hand_tracker.update_motion_state(
+                    lm_norm, w, h, mirrored=self.mirror_display
+                )
+                if current_state == SystemState.TRIGGERED:
+                    accent = "coral"
+                elif current_state == SystemState.COOLDOWN:
+                    accent = "amber"
+                elif "SWIPE" in motion_state:
+                    accent = "green"
+                else:
+                    accent = "cyan"
+
+                cand_label = None
+                if self.control_mode in ("hybrid", "ai_gestures"):
+                    if self.telemetry.predicted_class is not None and self.telemetry.predicted_class != int(self.cfg["classes"]["background_id"]):
+                        cname = self.class_names_list[self.telemetry.predicted_class]
+                        cand_label = f"{cname} ({self.telemetry.predicted_confidence * 100:.0f}%)"
+                elif lm_norm is not None:
+                    cand_label = vm_gesture_name
+
+                if self.overlay_style == "classic":
+                    overlay_label = (
+                        vm_gesture_name
+                        if (self.control_mode in ("hybrid", "virtual_mouse") and lm_norm is not None)
+                        else cand_label
+                    )
+                    draw_classic_mediapipe_overlay(
+                        display_frame,
+                        lm_norm,
+                        mirrored=self.mirror_display,
+                        gesture_label=overlay_label,
+                        cursor_xy=cursor_pos,
+                    )
+                else:
+                    draw_hud_hand_overlay(
+                        display_frame,
+                        lm_norm,
+                        motion_state=motion_state,
+                        bbox=bbox,
+                        accent=accent,
+                        mirrored=self.mirror_display,
+                        candidate_label=cand_label,
+                    )
+
+                # 4. Floating Screen Window ("Gesture Controller") pada thread yang sama
+                if self.floating_window_enabled and self.floating_window is not None:
+                    keep_open = self.floating_window.show(display_frame)
+                    if not keep_open:
+                        self.floating_window_enabled = False
+                        self.floating_window.close()
+                        with self._lock:
+                            self.telemetry.floating_window = False
+                elif self.floating_window is not None and self.floating_window.is_open:
+                    self.floating_window.close()
+
+                # 5. Timestamp Downsampling ke 12 FPS untuk Buffer & ONNX AI Gestures
+                probs = self.telemetry.probabilities
+                pred_idx = self.telemetry.predicted_class
+                pred_conf = self.telemetry.predicted_confidence
+                lat_ms = self.telemetry.inference_latency_ms
+                motion_speed = self.telemetry.motion_speed
+                motion_ok = self.telemetry.motion_gate_passed
+
+                if self.control_mode in ("hybrid", "ai_gestures") and self.resampler.accept(now):
+                    if lm_centered is not None:
+                        self.last_hand_seen_time = now
+                        self.raw_landmark_buffer.append(lm_centered)
+                    else:
+                        if now - self.last_hand_seen_time > self.hand_absent_reset_s:
+                            self.raw_landmark_buffer.clear()
+                            self.gate.reset()
+                            current_state = SystemState.STANDBY
+                        else:
+                            self.raw_landmark_buffer.append(np.full((21, 3), np.nan, dtype=np.float32))
+
+                    buf_len = len(self.raw_landmark_buffer)
+                    self.frames_since_last_infer += 1
+
+                    if buf_len == 0:
+                        current_state = SystemState.STANDBY
+                    elif buf_len < self.buffer_size:
+                        current_state = SystemState.BUFFERING
+                    else:
+                        current_state = self.gate.phase(now)
+
+                    if buf_len == self.buffer_size and self.frames_since_last_infer >= self.stride:
+                        self.frames_since_last_infer = 0
+                        buf_array = np.array(self.raw_landmark_buffer, dtype=np.float32)
+
+                        filled_seq, missing_ratio = interpolate_missing(buf_array)
+
+                        if filled_seq is not None and missing_ratio <= self.max_missing_ratio:
+                            motion_speed = mean_joint_speed(filled_seq)
+                            motion_ok = motion_speed >= self.gate.cfg.motion_threshold
+
+                            if self.onnx_session is not None and self.pipeline is not None:
+                                t_infer_start = time.perf_counter()
+                                x_feat = self.pipeline(filled_seq)
+                                x_feat = np.expand_dims(x_feat, axis=0)
+
+                                input_name = self.onnx_session.get_inputs()[0].name
+                                outputs = self.onnx_session.run(None, {input_name: x_feat})
+                                probs = outputs[0][0]
+                                lat_ms = (time.perf_counter() - t_infer_start) * 1e3
+                                pred_idx = int(np.argmax(probs))
+                                pred_conf = float(probs[pred_idx])
+
+                            decision: GateDecision = self.gate.update(probs, motion_ok, now)
+
+                            if decision.fire and decision.class_id is not None:
+                                action_res = self.os_controller.execute(decision.class_id)
+                                current_state = SystemState.TRIGGERED
+                                toast_msg = f"{action_res.label} ({action_res.shortcut})"
+                                toast_exp = now + float(self.cfg["postprocessing"].get("toast_display_s", 1.6))
+
+                                with self._lock:
+                                    self.telemetry.last_action = action_res
+                                    self.telemetry.toast_message = toast_msg
+                                    self.telemetry.toast_expiry = toast_exp
+                                    self.telemetry.action_history.insert(0, {
+                                        "timestamp": time.strftime("%H:%M:%S") + f".{int((now % 1) * 1000):03d}",
+                                        "gesture": self.class_names_list[decision.class_id],
+                                        "action": action_res.label,
+                                        "shortcut": action_res.shortcut,
+                                        "confidence": f"{decision.confidence * 100:.1f}%",
+                                        "latency_ms": f"{lat_ms:.1f}ms",
+                                        "executed": action_res.executed,
+                                    })
+                                    if len(self.telemetry.action_history) > 10:
+                                        self.telemetry.action_history.pop()
+
+                # 6. Perbarui Snapshot Telemetri Thread-Safe
+                gate_reason_str = (
+                    "VIRTUAL_MOUSE"
+                    if self.control_mode == "virtual_mouse"
+                    else (
+                        self.gate.last_decision.reason
+                        if self.gate.last_decision
+                        else ("STANDBY" if buf_len == 0 else ("BUFFERING" if buf_len < self.buffer_size else "MONITORING"))
+                    )
+                )
+                with self._lock:
+                    self.last_processed_frame = display_frame
+                    self.telemetry.state = current_state
+                    self.telemetry.fps = computed_fps
+                    self.telemetry.inference_latency_ms = lat_ms
+                    self.telemetry.buffer_fill = buf_len
+                    self.telemetry.motion_speed = motion_speed
+                    self.telemetry.motion_gate_passed = motion_ok
+                    self.telemetry.probabilities = probs
+                    self.telemetry.predicted_class = pred_idx
+                    self.telemetry.predicted_confidence = pred_conf
+                    self.telemetry.gate_reason = gate_reason_str
+                    self.telemetry.cooldown_remaining = self.gate.cooldown_remaining(now)
+                    self.telemetry.consistency_count = (
+                        self.gate.last_decision.consistency if self.gate.last_decision else 0
+                    )
+                    self.telemetry.os_armed = os_armed_now
+                    self.telemetry.control_mode = self.control_mode
+                    self.telemetry.floating_window = self.floating_window_enabled
+                    self.telemetry.overlay_style = self.overlay_style
+                    self.telemetry.vm_gesture_name = vm_gesture_name
+                    self.telemetry.cursor_pos = cursor_pos
+        finally:
+            if self.floating_window is not None:
+                self.floating_window.close()
 
     def get_latest_frame_and_telemetry(self) -> Tuple[Optional[np.ndarray], TelemetryData]:
         """Ambil salinan frame terbaru dan telemetri untuk di-render oleh UI Streamlit."""
@@ -466,5 +592,10 @@ class GestureInferenceEngine:
                 action_history=list(self.telemetry.action_history),
                 toast_message=self.telemetry.toast_message if time.perf_counter() < self.telemetry.toast_expiry else None,
                 toast_expiry=self.telemetry.toast_expiry,
+                control_mode=self.telemetry.control_mode,
+                floating_window=self.telemetry.floating_window,
+                overlay_style=self.telemetry.overlay_style,
+                vm_gesture_name=self.telemetry.vm_gesture_name,
+                cursor_pos=self.telemetry.cursor_pos,
             )
             return frame, tele

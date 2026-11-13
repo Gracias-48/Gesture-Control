@@ -69,6 +69,46 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         unsafe_allow_html=True,
     )
 
+    st.sidebar.markdown('<div class="hud-section-title">Floating Screen & Control Mode</div>', unsafe_allow_html=True)
+    floating_enabled = st.sidebar.checkbox(
+        'Pop-Out Floating Window ("Gesture Controller")',
+        value=engine.floating_window_enabled,
+        help="Toggles the native Always-On-Top desktop camera window docked at top-right.",
+    )
+    if floating_enabled != engine.floating_window_enabled:
+        engine.set_floating_window(floating_enabled)
+
+    mode_options = ["hybrid", "virtual_mouse", "ai_gestures"]
+    mode_labels = {
+        "hybrid": "Hybrid (Virtual Mouse + AI Gestures)",
+        "virtual_mouse": "Virtual Mouse Only (30 FPS)",
+        "ai_gestures": "AI Temporal Gestures Only (12 FPS)",
+    }
+    mode_idx = mode_options.index(engine.control_mode) if engine.control_mode in mode_options else 0
+    selected_mode = st.sidebar.selectbox(
+        "Control Mode",
+        options=mode_options,
+        index=mode_idx,
+        format_func=lambda m: mode_labels[m],
+    )
+    if selected_mode != engine.control_mode:
+        engine.set_control_mode(selected_mode)
+
+    style_options = ["classic", "cyber_hud"]
+    style_labels = {
+        "classic": "Classic MediaPipe (Red Dots / Green Bones)",
+        "cyber_hud": "Cyber HUD (Neon Brackets)",
+    }
+    style_idx = style_options.index(engine.overlay_style) if engine.overlay_style in style_options else 0
+    selected_style = st.sidebar.selectbox(
+        "Skeleton Overlay Style",
+        options=style_options,
+        index=style_idx,
+        format_func=lambda s: style_labels[s],
+    )
+    if selected_style != engine.overlay_style:
+        engine.set_overlay_style(selected_style)
+
     st.sidebar.markdown('<div class="hud-section-title">Model Hot-Swapping</div>', unsafe_allow_html=True)
     models = ["TCN", "BiLSTM", "ST-GCN"]
     cur_model = engine.active_model_name.upper()
@@ -196,10 +236,27 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
 
         # Live Diagnostic Bar tepat di bawah viewport kamera
         diagnostic_placeholder = st.empty()
+        vm_status_placeholder = st.empty()
 
         # Riwayat Log Aksi OS
         st.markdown('<div class="hud-section-title" style="margin-top: 14px;">Recent Command Triggers</div>', unsafe_allow_html=True)
         log_placeholder = st.empty()
+
+        with st.expander("Virtual Mouse Gesture Guide (Viral-Doshi)", expanded=False):
+            st.markdown(
+                """
+                | Gesture | Hand Pose | OS Action |
+                | :--- | :--- | :--- |
+                | **Move Cursor** | V-Gesture (Index + Middle up, separated) | Moves OS cursor smoothly |
+                | **Left Click** | From V-Gesture, bend Index finger down | Left mouse click |
+                | **Right Click** | From V-Gesture, bend Middle finger down | Right mouse click |
+                | **Double Click** | Two Fingers Closed (Index + Middle together) | Double left click |
+                | **Drag & Drop** | Closed Fist | Holds left button while moving |
+                | **Scroll & Brightness** | Minor-hand Thumb-Index Pinch | Vertical/Horizontal scroll & brightness |
+                | **Volume & Brightness** | Major-hand Thumb-Index Pinch | System volume / brightness scrub |
+                | **Neutral / Release** | Open Palm (all fingers extended) | Releases active click/drag state |
+                """
+            )
 
     with col_tele:
         telemetry_placeholder = st.empty()
@@ -266,6 +323,20 @@ def render_live_hud(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
                 ),
                 unsafe_allow_html=True,
             )
+
+            cursor_str = f"({tele.cursor_pos[0]}, {tele.cursor_pos[1]})" if tele.cursor_pos else "--"
+            win_badge = "FLOATING ON" if tele.floating_window else "FLOATING OFF"
+            vm_html = (
+                '<div style="display:flex; justify-content:space-between; align-items:center; '
+                'padding:8px 12px; margin-top:6px; background:#141718; border:1px solid #242728; '
+                'border-radius:6px; font-family:monospace; font-size:0.78rem; color:#d4d4d4;">'
+                f'<span><b>Mode:</b> {tele.control_mode}</span>'
+                f'<span><b>Virtual Mouse:</b> {tele.vm_gesture_name}</span>'
+                f'<span><b>Cursor:</b> {cursor_str}</span>'
+                f'<span><b>Window:</b> {win_badge}</span>'
+                '</div>'
+            )
+            vm_status_placeholder.markdown(vm_html, unsafe_allow_html=True)
 
             # Telemetry Cards & 8-Class Softmax Confidence Bars
             telemetry_placeholder.markdown(
