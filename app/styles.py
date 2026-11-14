@@ -1,4 +1,4 @@
-"""Cyber Dark HUD Design System & HTML Component Renderers (COMP6826001).
+"""Cyber Dark HUD Design System & HTML Component Renderers.
 
 Tokens:
 - Canvas: #07080a (Deep Inky Black)

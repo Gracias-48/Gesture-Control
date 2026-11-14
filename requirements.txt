@@ -1,4 +1,4 @@
-# Touchless Gesture Control HUD — COMP6826001 Deep Learning
+# Touchless Gesture Control HUD — Dependencies
 # Target interpreter: Python 3.10 – 3.12 (MediaPipe legacy `solutions` API is not available on 3.13+)
 
 # --- Core numerics ---

@@ -1,7 +1,4 @@
-"""Live MediaPipe Hands wrapper + HUD-style corner-bracket hitbox & directional gesture overlay.
-
-COMP6826001 - Deep Learning Final Project
-"""
+"""Live MediaPipe Hands wrapper + HUD-style corner-bracket hitbox & directional gesture overlay."""
 from __future__ import annotations
 
 from collections import deque

@@ -78,7 +78,7 @@ def record_clip(
         draw_hud_text(display, prompt_text, (20, 80), scale=0.6, color=(255, 255, 255))
         draw_hud_text(display, "Tekan 'q' untuk batal", (20, display.shape[0] - 20), scale=0.5, color=(160, 160, 160))
 
-        cv2.imshow("Gesture Data Recorder (COMP6826001)", display)
+        cv2.imshow("Gesture Data Recorder", display)
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
             return None, 1.0
@@ -121,7 +121,7 @@ def run_countdown(cap: cv2.VideoCapture, seconds: int = 3, message: str = "") ->
         draw_hud_text(display, f"Bersiap dalam: {remaining}", (w // 2 - 120, h // 2), scale=1.4, color=(0, 255, 255), thickness=3)
         draw_hud_text(display, "Posisikan tangan di depan kamera", (w // 2 - 180, h // 2 + 60), scale=0.6, color=(200, 200, 200))
 
-        cv2.imshow("Gesture Data Recorder (COMP6826001)", display)
+        cv2.imshow("Gesture Data Recorder", display)
         if (cv2.waitKey(20) & 0xFF) == ord("q"):
             return False
     return True
@@ -197,7 +197,7 @@ def record_sessions(cfg: dict, class_ids: list[int], reps_per_class: int = 25) -
                     draw_hud_text(disp, cinst, (20, 110), scale=0.6, color=(0, 255, 200))
                     draw_hud_text(disp, "Tekan [SPACE] untuk countdown 3 detik | [Q] Keluar", (20, disp.shape[0] - 25), scale=0.55, color=(160, 160, 160))
 
-                    cv2.imshow("Gesture Data Recorder (COMP6826001)", disp)
+                    cv2.imshow("Gesture Data Recorder", disp)
                     k = cv2.waitKey(25) & 0xFF
                     if k == ord(" "):
                         waiting = False

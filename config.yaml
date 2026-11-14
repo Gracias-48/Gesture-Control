@@ -1,12 +1,11 @@
 # =============================================================================
 # Touchless Gesture Control HUD — Single configuration file
-# COMP6826001 Deep Learning Final Project
+# Independent Open-Source Real-Time Touchless HCI System
 # All modules (data, models, training, inference, app) read from this file.
 # =============================================================================
 
 project:
   name: "Touchless Gesture Control HUD"
-  course: "COMP6826001 - Deep Learning"
   seed: 42
 
 # -----------------------------------------------------------------------------

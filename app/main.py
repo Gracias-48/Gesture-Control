@@ -1,7 +1,4 @@
-"""Streamlit Real-Time Touchless Gesture Control HUD & Evaluation Dashboard.
-
-COMP6826001 - Deep Learning Final Project
-"""
+"""Streamlit Real-Time Touchless Gesture Control HUD & Evaluation Dashboard."""
 from __future__ import annotations
 
 import csv
@@ -63,7 +60,7 @@ def render_sidebar(engine: GestureInferenceEngine, cfg: Dict[str, Any]):
         """
         <div style="padding: 10px 0; border-bottom: 1px solid #242728; margin-bottom: 16px;">
             <div style="font-size: 1.1rem; font-weight: 700; color: #f9f9f9;">TOUCHLESS GESTURE HUD</div>
-            <div style="font-size: 0.75rem; color: #9c9c9d;">Aero Motion Control • COMP6826001</div>
+            <div style="font-size: 0.75rem; color: #9c9c9d;">Aero Motion Control • Local ONNX + MediaPipe</div>
         </div>
         """,
         unsafe_allow_html=True,
